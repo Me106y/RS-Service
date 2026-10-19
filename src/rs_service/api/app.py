@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
@@ -12,6 +14,7 @@ from ..db.models import Satellite, Sensor, SyncRun, SyncState, TleCurrent
 from ..db.session import session_scope
 
 ACCURACY_NOTE = "TLE/SGP4; along-track ~1 km/day; not for sub-meter planning"
+AOI_DIR = Path(__file__).resolve().parents[3] / "data" / "aoi"
 
 
 def create_app() -> FastAPI:
@@ -76,6 +79,13 @@ def create_app() -> FastAPI:
                 "tle": _tle_dict(tle),
                 "accuracy_note": ACCURACY_NOTE,
             }
+
+    @app.get("/api/v1/aoi/hangzhou")
+    def hangzhou_aoi() -> dict[str, Any]:
+        path = AOI_DIR / "hangzhou_330100.geojson"
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="hangzhou_aoi_not_found")
+        return json.loads(path.read_text(encoding="utf-8"))
 
     @app.get("/api/v1/sync/status")
     def sync_status() -> dict[str, Any]:
