@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Query
 from sqlalchemy import func, select
 
 from .. import __version__
-from ..astro.service import passes_for_sat, position_now, track_for_sat
+from ..astro.service import all_positions, passes_for_sat, position_now, track_for_sat
 from ..db.models import Satellite, Sensor, SyncRun, SyncState, TleCurrent
 from ..db.session import session_scope
 
@@ -55,6 +55,11 @@ def create_app() -> FastAPI:
                 "items": [_sat_dict(row) for row in rows],
                 "accuracy_note": ACCURACY_NOTE,
             }
+
+    @app.get("/api/v1/positions")
+    def positions() -> dict[str, Any]:
+        with session_scope() as session:
+            return all_positions(session)
 
     @app.get("/api/v1/satellites/{sat_id}")
     def get_satellite(sat_id: int) -> dict[str, Any]:

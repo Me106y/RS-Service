@@ -1,0 +1,15 @@
+[Unit]
+Description=RS-Service MCP server (localhost:8765)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/桌面/RS-Service
+Environment=RS_DB_PATH=%h/.local/share/rs-service/rs.db
+ExecStart=%h/桌面/RS-Service/.venv/bin/rs-service serve-mcp --port 8765
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

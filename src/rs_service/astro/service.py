@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db.models import Satellite, TleCurrent, TleRecord
@@ -86,3 +87,42 @@ def position_now(session: Session, sat_id: int) -> dict:
     sat = satellite_from_omm(omm)
     point = subpoint(sat, datetime.now(UTC))
     return {"sat_id": sat_id, "tle_age_hours": round(age, 2), **point, "accuracy_note": ACCURACY_NOTE}
+
+
+def all_positions(session: Session) -> dict:
+    """Return current sub-satellite points for every satellite with a fresh TLE."""
+    now = datetime.now(UTC)
+    rows = session.execute(
+        select(TleCurrent, Satellite).join(Satellite, Satellite.sat_id == TleCurrent.sat_id)
+    ).all()
+    items: list[dict] = []
+    for tle, sat in rows:
+        if tle.age_hours is not None and tle.age_hours > MAX_TLE_AGE_HOURS:
+            continue
+        record = session.get(TleRecord, tle.tle_id)
+        if record is None or not record.omm_json:
+            continue
+        try:
+            sat_obj = satellite_from_omm(json.loads(record.omm_json))
+        except (ValueError, KeyError):
+            continue
+        point = subpoint(sat_obj, now)
+        items.append(
+            {
+                "norad": sat.sat_id,
+                "name": sat.name,
+                "category": sat.category,
+                "orbit_regime": sat.orbit_regime,
+                "payload_public": sat.payload_public,
+                "lat": point["lat_deg"],
+                "lon": point["lon_deg"],
+                "alt_km": point["alt_km"],
+                "tle_age_hours": round(float(tle.age_hours or 0.0), 2),
+            }
+        )
+    return {
+        "generated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "count": len(items),
+        "items": items,
+        "accuracy_note": ACCURACY_NOTE,
+    }
