@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException, Query
 from sqlalchemy import func, select
 
 from .. import __version__
+from ..astro.coverage import COVERAGE_IDS, coverage_grid
 from ..astro.service import all_positions, passes_for_sat, position_now, track_for_sat
 from ..db.models import Satellite, Sensor, SyncRun, SyncState, TleCurrent
 from ..db.session import session_scope
@@ -76,6 +77,29 @@ def create_app() -> FastAPI:
                 "tle": _tle_dict(tle),
                 "accuracy_note": ACCURACY_NOTE,
             }
+
+    @app.get("/api/v1/coverage")
+    def coverage(
+        lat: float = Query(default=30.27, ge=-90, le=90),
+        lon: float = Query(default=120.16, ge=-180, le=180),
+        radius_km: float = Query(default=100.0, ge=20, le=500),
+        hours: int = Query(default=24, ge=1, le=72),
+        grid: float = Query(default=0.15, ge=0.05, le=1.0),
+        focus: bool = Query(default=True),
+        at: str | None = Query(default=None),
+    ) -> dict[str, Any]:
+        start = _parse_time(at) if at else None
+        with session_scope() as session:
+            return coverage_grid(
+                session,
+                latitude_deg=lat,
+                longitude_deg=lon,
+                radius_km=radius_km,
+                hours=hours,
+                grid_deg=grid,
+                start=start,
+                sat_ids=COVERAGE_IDS if focus else None,
+            )
 
     @app.get("/api/v1/sync/status")
     def sync_status() -> dict[str, Any]:

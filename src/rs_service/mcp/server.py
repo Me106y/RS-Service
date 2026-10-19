@@ -7,6 +7,8 @@ from mcp.server.mcpserver import MCPServer
 from sqlalchemy import select
 
 from .. import __version__
+from ..astro.coverage import COVERAGE_IDS
+from ..astro.coverage import coverage_grid as build_coverage
 from ..astro.service import all_positions, passes_for_sat, position_now, track_for_sat
 from ..db.models import Satellite, Sensor, SyncRun, SyncState, TleCurrent
 from ..db.session import session_scope
@@ -156,6 +158,25 @@ def ground_track(sat_id: int, hours: int = 2, step_s: int = 60) -> dict[str, Any
             )
     except (LookupError, ValueError) as exc:
         return {"ok": False, "error": str(exc), "sat_id": sat_id}
+
+
+@mcp.tool()
+def coverage_window(
+    lat: float = 30.27,
+    lon: float = 120.16,
+    radius_km: float = 150.0,
+    hours: int = 24,
+) -> dict[str, Any]:
+    """Estimate per-cell pass coverage over an AOI for the focus satellite set."""
+    with session_scope() as session:
+        return build_coverage(
+            session,
+            latitude_deg=lat,
+            longitude_deg=lon,
+            radius_km=radius_km,
+            hours=hours,
+            sat_ids=COVERAGE_IDS,
+        )
 
 
 @mcp.tool()
