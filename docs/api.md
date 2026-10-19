@@ -13,7 +13,6 @@
 | GET | `/satellites/{norad}/passes?hours=24&lat=30.27&lon=120.16&min_elev=5&step=30` | 过境窗口；5° 可见，10°+太阳>10° 标 `optical_imaging_ok` |
 | GET | `/satellites/{norad}/track?hours=2&step=60&at=ISO` | 星下点轨迹；`at` 支持时间轴 |
 | GET | `/satellites/{norad}/position` | 当前星下点 |
-| GET | `/coverage?lat=&lon=&radius_km=150&hours=24&grid=0.15&focus=true&at=ISO` | 24h 覆盖热力图（过境次数/格） |
 | GET | `/sync/status` | 最近同步尝试、重试状态、TLE 最大年龄 |
 
 所有响应带：
@@ -47,10 +46,9 @@ DSH 侧工具名带前缀：`mcp__rs-service__<tool>`。
 | `ground_track` | `sat_id`, `hours?`, `step_s?` | 星下点轨迹 |
 | `list_positions` | — | 111 颗当前星下点（批量） |
 | `current_position` | `sat_id` | 当前星下点 |
-| `coverage_window` | `lat?`, `lon?`, `radius_km?`, `hours?` | 覆盖热力图（19 颗高分辨率星，过境次数/格） |
 | `sync_status` | — | 最近同步、重试状态、TLE 最大年龄 |
 
-后续工具（`get_tle`、`propagate`、`coverage_window`、`run_command`）按需求文档 §5.2 逐步补齐；每个工具同时更新本文件与 `COMMANDS.md`。
+后续工具（`get_tle`、`propagate`、`run_command`）按需求文档 §5.2 逐步补齐；每个工具同时更新本文件与 `COMMANDS.md`。
 
 ## 错误约定
 
