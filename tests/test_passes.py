@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from rs_service.astro.passes import find_passes
 from rs_service.astro.propagate import satellite_from_omm
@@ -32,8 +32,8 @@ def test_find_passes_over_hangzhou() -> None:
         sat,
         30.27,
         120.16,
-        datetime(2026, 10, 19, tzinfo=timezone.utc),
-        datetime(2026, 10, 20, tzinfo=timezone.utc),
+        datetime(2026, 10, 19, tzinfo=UTC),
+        datetime(2026, 10, 20, tzinfo=UTC),
         min_elevation_deg=5.0,
         step_s=30,
     )
