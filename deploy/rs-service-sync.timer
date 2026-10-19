@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily RS-Service ephemeris sync (03:00 Asia/Shanghai)
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 Asia/Shanghai
+Persistent=true
+RandomizedDelaySec=60
+Unit=rs-service-sync.service
+
+[Install]
+WantedBy=timers.target
