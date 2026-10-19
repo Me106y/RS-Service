@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
 from sqlalchemy import func, select
 
 from .. import __version__
+from ..astro.service import passes_for_sat, position_now, track_for_sat
 from ..db.models import Satellite, Sensor, SyncRun, SyncState, TleCurrent
 from ..db.session import session_scope
 
@@ -83,6 +85,60 @@ def create_app() -> FastAPI:
             "tle_max_age_hours": max_age,
             "accuracy_note": ACCURACY_NOTE,
         }
+
+    @app.get("/api/v1/satellites/{sat_id}/passes")
+    def satellite_passes(
+        sat_id: int,
+        hours: int = Query(default=24, ge=1, le=168),
+        lat: float = Query(default=30.27, ge=-90, le=90),
+        lon: float = Query(default=120.16, ge=-180, le=180),
+        min_elev: float = Query(default=5.0, ge=0, le=90),
+        step: int = Query(default=30, ge=5, le=300),
+    ) -> dict[str, Any]:
+        start = datetime.now(UTC)
+        try:
+            with session_scope() as session:
+                return passes_for_sat(
+                    session,
+                    sat_id,
+                    latitude_deg=lat,
+                    longitude_deg=lon,
+                    start=start,
+                    end=start + timedelta(hours=hours),
+                    min_elevation_deg=min_elev,
+                    step_s=step,
+                )
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/api/v1/satellites/{sat_id}/track")
+    def satellite_track(
+        sat_id: int,
+        hours: int = Query(default=2, ge=1, le=24),
+        step: int = Query(default=60, ge=10, le=600),
+    ) -> dict[str, Any]:
+        start = datetime.now(UTC)
+        try:
+            with session_scope() as session:
+                return track_for_sat(
+                    session, sat_id, start=start, end=start + timedelta(hours=hours), step_s=step
+                )
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/api/v1/satellites/{sat_id}/position")
+    def satellite_position(sat_id: int) -> dict[str, Any]:
+        try:
+            with session_scope() as session:
+                return position_now(session, sat_id)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     return app
 

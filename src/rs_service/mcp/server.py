@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 from sqlalchemy import select
 
 from .. import __version__
+from ..astro.service import passes_for_sat, position_now, track_for_sat
 from ..db.models import Satellite, Sensor, SyncRun, SyncState, TleCurrent
 from ..db.session import session_scope
 from ..settings import settings
@@ -116,6 +118,54 @@ def sync_status() -> dict[str, Any]:
             "max_tle_age_hours": tle.age_hours if tle else None,
             "accuracy_note": ACCURACY_NOTE,
         }
+
+
+@mcp.tool()
+def next_passes(
+    sat_id: int,
+    hours: int = 24,
+    lat: float = 30.27,
+    lon: float = 120.16,
+    min_elev: float = 5.0,
+) -> dict[str, Any]:
+    """Return pass windows for one satellite over an AOI point (default Hangzhou)."""
+    start = datetime.now(UTC)
+    try:
+        with session_scope() as session:
+            return passes_for_sat(
+                session,
+                sat_id,
+                latitude_deg=lat,
+                longitude_deg=lon,
+                start=start,
+                end=start + timedelta(hours=hours),
+                min_elevation_deg=min_elev,
+            )
+    except (LookupError, ValueError) as exc:
+        return {"ok": False, "error": str(exc), "sat_id": sat_id}
+
+
+@mcp.tool()
+def ground_track(sat_id: int, hours: int = 2, step_s: int = 60) -> dict[str, Any]:
+    """Return the sub-satellite track for one satellite."""
+    start = datetime.now(UTC)
+    try:
+        with session_scope() as session:
+            return track_for_sat(
+                session, sat_id, start=start, end=start + timedelta(hours=hours), step_s=step_s
+            )
+    except (LookupError, ValueError) as exc:
+        return {"ok": False, "error": str(exc), "sat_id": sat_id}
+
+
+@mcp.tool()
+def current_position(sat_id: int) -> dict[str, Any]:
+    """Return the current sub-satellite point for one satellite."""
+    try:
+        with session_scope() as session:
+            return position_now(session, sat_id)
+    except (LookupError, ValueError) as exc:
+        return {"ok": False, "error": str(exc), "sat_id": sat_id}
 
 
 def run_server(host: str | None = None, port: int | None = None) -> None:

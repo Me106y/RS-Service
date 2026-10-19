@@ -9,6 +9,9 @@
 | GET | `/health` | 卫星数、最近同步、同步状态 |
 | GET | `/satellites?category=&orbit=&payload_public=&limit=&offset=` | 卫星列表，默认 50 条 |
 | GET | `/satellites/{norad}` | 卫星 + 传感器 + 当前 TLE |
+| GET | `/satellites/{norad}/passes?hours=24&lat=30.27&lon=120.16&min_elev=5&step=30` | 过境窗口；5° 可见，10°+太阳>10° 标 `optical_imaging_ok` |
+| GET | `/satellites/{norad}/track?hours=2&step=60` | 星下点轨迹 |
+| GET | `/satellites/{norad}/position` | 当前星下点 |
 | GET | `/sync/status` | 最近同步尝试、重试状态、TLE 最大年龄 |
 
 所有响应带：
@@ -38,9 +41,12 @@ DSH 侧工具名带前缀：`mcp__rs-service__<tool>`。
 | --- | --- | --- |
 | `list_satellites` | `category?`, `orbit?` | 111 颗摘要（norad/name/category/orbit/payload_public） |
 | `get_satellite` | `sat_id` | 目录 + 传感器摘要 + TLE 年龄 |
+| `next_passes` | `sat_id`, `hours?`, `lat?`, `lon?`, `min_elev?` | 过境窗口（AOS/LOS/TCA/最大仰角/太阳高度/光学可用） |
+| `ground_track` | `sat_id`, `hours?`, `step_s?` | 星下点轨迹 |
+| `current_position` | `sat_id` | 当前星下点 |
 | `sync_status` | — | 最近同步、重试状态、TLE 最大年龄 |
 
-后续工具（`get_tle`、`propagate`、`ground_track`、`next_passes`、`coverage_window`、`run_command`）按需求文档 §5.2 逐步补齐；每个工具同时更新本文件与 `COMMANDS.md`。
+后续工具（`get_tle`、`propagate`、`coverage_window`、`run_command`）按需求文档 §5.2 逐步补齐；每个工具同时更新本文件与 `COMMANDS.md`。
 
 ## 错误约定
 

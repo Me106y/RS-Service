@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict
+from datetime import UTC
 from typing import Any
 
 import typer
@@ -137,6 +138,67 @@ def serve_mcp(
     from .mcp.server import run_server
 
     run_server(host=host, port=port)
+
+
+@app.command()
+def passes(
+    sat_id: int = typer.Option(..., "--sat-id"),
+    hours: int = typer.Option(24, "--hours"),
+    lat: float = typer.Option(30.27, "--lat"),
+    lon: float = typer.Option(120.16, "--lon"),
+    min_elev: float = typer.Option(5.0, "--min-elev"),
+    step: int = typer.Option(30, "--step"),
+    db: str | None = typer.Option(None, "--db"),
+) -> None:
+    """查询单星在指定地点的过境窗口。"""
+    from datetime import datetime, timedelta
+
+    from .astro.service import passes_for_sat
+
+    start = datetime.now(UTC)
+    with session_scope(db) as session:
+        result = passes_for_sat(
+            session,
+            sat_id,
+            latitude_deg=lat,
+            longitude_deg=lon,
+            start=start,
+            end=start + timedelta(hours=hours),
+            min_elevation_deg=min_elev,
+            step_s=step,
+        )
+    _dump(result)
+
+
+@app.command()
+def track(
+    sat_id: int = typer.Option(..., "--sat-id"),
+    hours: int = typer.Option(2, "--hours"),
+    step: int = typer.Option(60, "--step"),
+    db: str | None = typer.Option(None, "--db"),
+) -> None:
+    """查询单星星下点轨迹。"""
+    from datetime import datetime, timedelta
+
+    from .astro.service import track_for_sat
+
+    start = datetime.now(UTC)
+    with session_scope(db) as session:
+        result = track_for_sat(session, sat_id, start=start, end=start + timedelta(hours=hours), step_s=step)
+    _dump(result)
+
+
+@app.command()
+def position(
+    sat_id: int = typer.Option(..., "--sat-id"),
+    db: str | None = typer.Option(None, "--db"),
+) -> None:
+    """查询单星当前星下点。"""
+    from .astro.service import position_now
+
+    with session_scope(db) as session:
+        result = position_now(session, sat_id)
+    _dump(result)
 
 
 @app.command()
