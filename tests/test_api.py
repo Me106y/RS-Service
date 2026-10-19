@@ -27,6 +27,13 @@ def test_api_health_and_satellites(seeded_db: str) -> None:
         assert detail["satellite"]["payload_public"] is True
         assert detail["sensor"]["raw_spec"]
 
+        aois = client.get("/api/v1/aoi").json()
+        assert aois["items"][0]["code"] == "330100"
+        assert 16_000 < aois["items"][0]["area_km2"] < 17_500
+
+        boundary = client.get("/api/v1/aoi/hangzhou").json()
+        assert len(boundary["features"][0]["geometry"]["coordinates"][0]) == 6406
+
         hidden = client.get("/api/v1/satellites/64048").json()
         assert hidden["satellite"]["payload_public"] is False
         assert "raw_spec" not in hidden["sensor"]

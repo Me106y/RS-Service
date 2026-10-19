@@ -8,6 +8,7 @@
 | --- | --- | --- |
 | GET | `/health` | 卫星数、最近同步、同步状态 |
 | GET | `/satellites?category=&orbit=&payload_public=&limit=&offset=` | 卫星列表，默认 50 条 |
+| GET | `/aoi` | AOI 列表（杭州 330100，16819 km²） |
 | GET | `/aoi/hangzhou` | 杭州 WGS84 市界 GeoJSON（Amap 转换，6406 点） |
 | GET | `/positions?at=ISO` | 111 颗星下点；`at` 省略为当前，支持时间轴 |
 | GET | `/satellites/{norad}` | 卫星 + 传感器 + 当前 TLE |

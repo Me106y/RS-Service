@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 
 from .. import __version__
 from ..astro.service import all_positions, passes_for_sat, position_now, track_for_sat
-from ..db.models import Satellite, Sensor, SyncRun, SyncState, TleCurrent
+from ..db.models import Aoi, Satellite, Sensor, SyncRun, SyncState, TleCurrent
 from ..db.session import session_scope
 
 ACCURACY_NOTE = "TLE/SGP4; along-track ~1 km/day; not for sub-meter planning"
@@ -79,6 +79,27 @@ def create_app() -> FastAPI:
                 "tle": _tle_dict(tle),
                 "accuracy_note": ACCURACY_NOTE,
             }
+
+    @app.get("/api/v1/aoi")
+    def list_aoi() -> dict[str, Any]:
+        with session_scope() as session:
+            rows = list(session.scalars(select(Aoi).order_by(Aoi.code)))
+        return {
+            "items": [
+                {
+                    "code": row.code,
+                    "name": row.name,
+                    "level": row.level,
+                    "adcode": row.adcode,
+                    "bbox": [row.min_lon, row.min_lat, row.max_lon, row.max_lat],
+                    "area_km2": row.area_km2,
+                    "source": row.source,
+                    "datum": row.datum,
+                    "accuracy": row.accuracy,
+                }
+                for row in rows
+            ]
+        }
 
     @app.get("/api/v1/aoi/hangzhou")
     def hangzhou_aoi() -> dict[str, Any]:

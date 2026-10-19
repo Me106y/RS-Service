@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from rs_service.db.seed import seed_catalog
+from rs_service.db.seed import seed_aoi, seed_catalog
 from rs_service.db.session import init_db, reset_engine, session_scope
 
 
@@ -14,6 +14,7 @@ def db_url(tmp_path: Path) -> str:
     init_db(url)
     with session_scope(url) as session:
         seed_catalog(session)
+        seed_aoi(session)
     yield url
     reset_engine()
 

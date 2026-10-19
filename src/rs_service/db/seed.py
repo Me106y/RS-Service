@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from datetime import UTC
 from pathlib import Path
@@ -10,9 +11,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..settings import settings
-from .models import DataSource, Satellite, SatelliteAlias, Sensor
+from .models import Aoi, DataSource, Satellite, SatelliteAlias, Sensor
 
 DEFAULT_SEED_PATH = Path(__file__).resolve().parents[3] / "data" / "satellites_seed.json"
+AOI_PATH = Path(__file__).resolve().parents[3] / "data" / "aoi" / "hangzhou_330100.geojson"
 
 
 def max_km(raw: str | None) -> float | None:
@@ -128,3 +130,50 @@ def _now() -> str:
     from datetime import datetime
 
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def seed_aoi(session: Session, path: Path | None = None) -> dict[str, int]:
+    """把杭州 WGS84 市界写入 aoi 表（code=330100）。"""
+    source = path or AOI_PATH
+    payload = json.loads(source.read_text(encoding="utf-8"))
+    feature = payload["features"][0]
+    ring = feature["geometry"]["coordinates"][0]
+    props = feature["properties"]
+    wkt = "POLYGON((" + ",".join(f"{lon} {lat}" for lon, lat in ring) + "))"
+    min_lon, min_lat, max_lon, max_lat = props["bbox"]
+    area = _ring_area_km2(ring)
+
+    aoi = session.scalar(select(Aoi).where(Aoi.code == "330100"))
+    inserted = 0
+    if aoi is None:
+        aoi = Aoi(code="330100")
+        session.add(aoi)
+        inserted = 1
+    aoi.name = props.get("name", "杭州市")
+    aoi.level = "city"
+    aoi.adcode = "330100"
+    aoi.geom_wkt = wkt
+    aoi.min_lat = min_lat
+    aoi.min_lon = min_lon
+    aoi.max_lat = max_lat
+    aoi.max_lon = max_lon
+    aoi.area_km2 = area
+    aoi.source = props.get("source", "amap_district")
+    aoi.datum = "wgs84"
+    aoi.accuracy = props.get("accuracy", "approx")
+    session.flush()
+    return {"inserted": inserted, "points": len(ring), "area_km2": round(area, 1)}
+
+
+def _ring_area_km2(ring: list[list[float]]) -> float:
+    if len(ring) < 3:
+        return 0.0
+    lat0 = sum(point[1] for point in ring) / len(ring)
+    kx = 111.320 * math.cos(math.radians(lat0))
+    ky = 110.574
+    total = 0.0
+    for index in range(len(ring) - 1):
+        x1, y1 = ring[index][0] * kx, ring[index][1] * ky
+        x2, y2 = ring[index + 1][0] * kx, ring[index + 1][1] * ky
+        total += x1 * y2 - x2 * y1
+    return abs(total) / 2.0

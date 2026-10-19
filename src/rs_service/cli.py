@@ -9,7 +9,7 @@ import typer
 from sqlalchemy import func, select
 
 from .db.models import Satellite, Sensor, SyncRun, SyncState, TleCurrent
-from .db.seed import DEFAULT_SEED_PATH, seed_catalog
+from .db.seed import DEFAULT_SEED_PATH, seed_aoi, seed_catalog
 from .db.session import init_db, session_scope
 from .settings import settings
 from .sync.runner import run_sync
@@ -30,7 +30,8 @@ def init(
     init_db(db)
     with session_scope(db) as session:
         result = seed_catalog(session, path=seed)
-    _dump({"ok": True, "db": db or settings.sqlalchemy_url(), **result})
+        aoi = seed_aoi(session)
+    _dump({"ok": True, "db": db or settings.sqlalchemy_url(), **result, "aoi": aoi})
 
 
 @app.command()
@@ -41,7 +42,8 @@ def seed(
     """只写入/更新卫星目录，不建表。"""
     with session_scope(db) as session:
         result = seed_catalog(session, path=seed_path)
-    _dump({"ok": True, **result})
+        aoi = seed_aoi(session)
+    _dump({"ok": True, **result, "aoi": aoi})
 
 
 @app.command()
