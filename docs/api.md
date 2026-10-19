@@ -8,10 +8,10 @@
 | --- | --- | --- |
 | GET | `/health` | 卫星数、最近同步、同步状态 |
 | GET | `/satellites?category=&orbit=&payload_public=&limit=&offset=` | 卫星列表，默认 50 条 |
-| GET | `/positions` | 111 颗当前星下点（供前端 5 s 刷新，单次约 0.07 s） |
+| GET | `/positions?at=ISO` | 111 颗星下点；`at` 省略为当前，支持时间轴 |
 | GET | `/satellites/{norad}` | 卫星 + 传感器 + 当前 TLE |
 | GET | `/satellites/{norad}/passes?hours=24&lat=30.27&lon=120.16&min_elev=5&step=30` | 过境窗口；5° 可见，10°+太阳>10° 标 `optical_imaging_ok` |
-| GET | `/satellites/{norad}/track?hours=2&step=60` | 星下点轨迹 |
+| GET | `/satellites/{norad}/track?hours=2&step=60&at=ISO` | 星下点轨迹；`at` 支持时间轴 |
 | GET | `/satellites/{norad}/position` | 当前星下点 |
 | GET | `/sync/status` | 最近同步尝试、重试状态、TLE 最大年龄 |
 

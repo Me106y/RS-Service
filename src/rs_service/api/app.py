@@ -57,9 +57,10 @@ def create_app() -> FastAPI:
             }
 
     @app.get("/api/v1/positions")
-    def positions() -> dict[str, Any]:
+    def positions(at: str | None = Query(default=None)) -> dict[str, Any]:
+        when = _parse_time(at) if at else None
         with session_scope() as session:
-            return all_positions(session)
+            return all_positions(session, when=when)
 
     @app.get("/api/v1/satellites/{sat_id}")
     def get_satellite(sat_id: int) -> dict[str, Any]:
@@ -123,8 +124,9 @@ def create_app() -> FastAPI:
         sat_id: int,
         hours: int = Query(default=2, ge=1, le=24),
         step: int = Query(default=60, ge=10, le=600),
+        at: str | None = Query(default=None),
     ) -> dict[str, Any]:
-        start = datetime.now(UTC)
+        start = _parse_time(at) if at else datetime.now(UTC)
         try:
             with session_scope() as session:
                 return track_for_sat(
@@ -146,6 +148,14 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     return app
+
+
+def _parse_time(value: str) -> datetime:
+    text = value.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    parsed = datetime.fromisoformat(text)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
 def _sat_dict(sat: Satellite) -> dict[str, Any]:

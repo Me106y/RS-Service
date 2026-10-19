@@ -89,9 +89,9 @@ def position_now(session: Session, sat_id: int) -> dict:
     return {"sat_id": sat_id, "tle_age_hours": round(age, 2), **point, "accuracy_note": ACCURACY_NOTE}
 
 
-def all_positions(session: Session) -> dict:
-    """Return current sub-satellite points for every satellite with a fresh TLE."""
-    now = datetime.now(UTC)
+def all_positions(session: Session, when: datetime | None = None) -> dict:
+    """Return sub-satellite points for every satellite with a fresh TLE."""
+    now = when or datetime.now(UTC)
     rows = session.execute(
         select(TleCurrent, Satellite).join(Satellite, Satellite.sat_id == TleCurrent.sat_id)
     ).all()

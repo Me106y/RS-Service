@@ -15,6 +15,14 @@ from .models import DataSource, Satellite, SatelliteAlias, Sensor
 DEFAULT_SEED_PATH = Path(__file__).resolve().parents[3] / "data" / "satellites_seed.json"
 
 
+def max_km(raw: str | None) -> float | None:
+    """从传感器文本里取最大的 km 数值，作为幅宽近似（仅供前端画足迹）。"""
+    if not raw:
+        return None
+    values = [float(item) for item in re.findall(r"(\d+(?:\.\d+)?)\s*km", raw)]
+    return max(values) if values else None
+
+
 def normalize_alias(value: str) -> str:
     return re.sub(r"\s+", " ", value.strip().upper())
 
@@ -80,6 +88,9 @@ def seed_catalog(session: Session, path: Path | None = None) -> dict[str, int]:
         sensor.sensor_name = item.get("sensor_type")
         sensor.sensor_type = item.get("sensor_type")
         sensor.raw_spec = item.get("raw_spec")
+        sensor.swath_km = max_km(item.get("raw_spec"))
+        if sat.orbit_regime == "GEO":
+            sensor.swath_km = 2000.0
         sensor.confidence = item.get("confidence", "unknown")
         sensor.updated_at = _now()
         sensors += 1

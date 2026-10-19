@@ -4,9 +4,9 @@
 
 ```bash
 mkdir -p ~/.config/systemd/user
-cp deploy/rs-service-sync.service deploy/rs-service-sync.timer ~/.config/systemd/user/
+cp deploy/rs-service-*.service deploy/rs-service-sync.timer ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now rs-service-sync.timer
+systemctl --user enable --now rs-service-api.service rs-service-mcp.service rs-service-sync.timer
 
 # 查看
 systemctl --user list-timers rs-service-sync.timer
