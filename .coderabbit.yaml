@@ -1,0 +1,31 @@
+# CodeRabbit 配置：https://docs.coderabbit.ai/reference/configuration
+language: "zh-CN"
+
+reviews:
+  profile: "chill"
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: false
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - "main"
+  path_filters:
+    - "!**/.venv/**"
+    - "!**/__pycache__/**"
+    - "!data/aoi/*.geojson"
+    - "!*.db"
+    - "!reports/**"
+  path_instructions:
+    - path: "src/rs_service/astro/**"
+      instructions: "重点检查 SGP4/坐标转换/覆盖率与重访口径、精度声明和性能；门限变更需对照文档。"
+    - path: "src/rs_service/mcp/**"
+      instructions: "MCP 工具的参数/返回结构变更需同步 COMMANDS.md 与技能文档，并保持错误码稳定。"
+    - path: "migrations/**"
+      instructions: "检查迁移是否可回滚、与模型一致、对现有数据的影响。"
+
+chat:
+  auto_reply: true
