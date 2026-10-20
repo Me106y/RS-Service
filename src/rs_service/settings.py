@@ -9,7 +9,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """RS-Service 配置；所有字段可用 RS_ 前缀环境变量覆盖。"""
 
-    model_config = SettingsConfigDict(env_prefix="RS_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="RS_",
+        env_file=str(Path(__file__).resolve().parents[2] / ".env"),
+        extra="ignore",
+    )
 
     data_dir: Path = Path.home() / ".local" / "share" / "rs-service"
     db_path: Path | None = None
