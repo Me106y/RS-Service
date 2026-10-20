@@ -31,12 +31,15 @@ def get_engine(url: str | None = None) -> Engine:
     if _engine is None or _engine_url != target:
         if _engine is not None:
             _engine.dispose()
+        is_sqlite = target.startswith("sqlite")
         _engine = create_engine(
             target,
             future=True,
-            connect_args={"check_same_thread": False},
+            connect_args={"check_same_thread": False} if is_sqlite else {},
         )
-        _configure_sqlite(_engine)
+        if is_sqlite:
+            # 单测仍可用 SQLite；生产是 PostgreSQL，不走 PRAGMA。
+            _configure_sqlite(_engine)
         _engine_url = target
     return _engine
 

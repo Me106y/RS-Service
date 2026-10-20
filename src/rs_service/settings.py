@@ -35,7 +35,10 @@ class Settings(BaseSettings):
     def sqlalchemy_url(self) -> str:
         if self.database_url:
             return self.database_url
-        return f"sqlite+pysqlite:///{self.resolved_db_path()}"
+        if self.db_path:
+            return f"sqlite+pysqlite:///{self.resolved_db_path()}"
+        # 生产默认 PostgreSQL；本机密码由 .env / RS_DATABASE_URL 提供。
+        return "postgresql+psycopg://rs_service@127.0.0.1:5432/rs_service"
 
     def retry_delays(self) -> list[int]:
         values = [item.strip() for item in self.sync_retry_delays.split(",") if item.strip()]
