@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import re
@@ -28,12 +29,15 @@ from typing import Any
 
 from shapely import wkt as shapely_wkt
 from shapely.geometry import mapping, shape
-from siriagent_skill.runner import run_skill  # noqa: E402
+from siriagent_skill.facade import execute_request  # noqa: E402
+from siriagent_skill.schemas import SkillInputError, normalize_request  # noqa: E402
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from rs_service.db.models import Aoi, Satellite, Sensor, TleCurrent, TleRecord
 from rs_service.db.session import session_scope
+
+from ..astro import cloud
 
 # 触发 vendor 的 sys.path 注入，必须在导入 siriagent_skill 之前。
 from . import VENDOR_DIR  # noqa: F401
@@ -83,6 +87,8 @@ class PlanSpec:
     mrt_area_quantile_pct: float = 90.0
     max_windows: int = 10
     max_weak_areas: int = 10
+    cloud_filter: bool = True
+    cloud_threshold_pct: float = 70.0
 
 
 @dataclass(frozen=True)
@@ -214,7 +220,14 @@ def _resolve_aoi(session: Session, spec: PlanSpec) -> tuple[str, str, dict[str, 
         },
         "geometry": mapping(geometry),
     }
-    return adcode, name, {"type": "FeatureCollection", "features": [feature]}
+    centroid = geometry.centroid
+    return (
+        adcode,
+        name,
+        {"type": "FeatureCollection", "features": [feature]},
+        float(centroid.y),
+        float(centroid.x),
+    )
 
 
 def _write_workspace(
@@ -293,14 +306,90 @@ def _payload(
     return payload
 
 
+def _filter_windows(
+    windows: dict[tuple[int, int], tuple[Any, ...]],
+    series: list[tuple[datetime, float]],
+    threshold_pct: float,
+) -> tuple[dict[tuple[int, int], tuple[Any, ...]], int]:
+    """按窗口中点云量剔除访问；同一 10 分钟桶只插值一次。"""
+
+    kept: dict[tuple[int, int], tuple[Any, ...]] = {}
+    dropped = 0
+    cache: dict[datetime, float | None] = {}
+    for key, items in windows.items():
+        keep = []
+        for window in items:
+            middle = window.start_utc + (window.end_utc - window.start_utc) / 2
+            bucket = middle.replace(
+                minute=(middle.minute // 10) * 10, second=0, microsecond=0
+            )
+            if bucket not in cache:
+                cache[bucket] = cloud.cloud_at(series, middle)
+            value = cache[bucket]
+            if value is not None and value > threshold_pct:
+                dropped += 1
+                continue
+            keep.append(window)
+        if keep:
+            kept[key] = tuple(keep)
+    return kept, dropped
+
+
+def _apply_cloud(
+    store: Any,
+    spec: PlanSpec,
+    lat: float,
+    lon: float,
+    stats: dict[str, Any],
+) -> Any:
+    series = cloud.series_for(lat, lon, spec.start_utc, max(1, int(spec.horizon_h) + 1))
+    if not series:
+        stats.update(
+            filtered=False,
+            reason="Open-Meteo 不可用，本次未过滤云量",
+        )
+        return store
+    kept, dropped = _filter_windows(store.windows, series, spec.cloud_threshold_pct)
+    filtered = copy.copy(store)
+    filtered.windows = kept
+    filtered.metadata = dict(store.metadata)
+    filtered.metadata["cloud"] = {
+        "threshold_pct": spec.cloud_threshold_pct,
+        "dropped_windows": dropped,
+    }
+    stats.update(
+        filtered=True,
+        threshold_pct=spec.cloud_threshold_pct,
+        dropped_windows=dropped,
+        reason=None,
+    )
+    return filtered
+
+
 def _annotate_result(
     result: dict[str, Any],
     candidates: list[Candidate],
     blocked: list[dict[str, Any]],
+    cloud_stats: dict[str, Any],
 ) -> dict[str, Any]:
     result["blocked_satellites"] = blocked
     result["candidate_count"] = len(candidates)
     result["blocked_count"] = len(blocked)
+    result["cloud"] = cloud_stats
+    assumptions = [
+        item
+        for item in (result.get("assumptions") or [])
+        if "不包含云量" not in str(item)
+    ]
+    if cloud_stats.get("filtered"):
+        assumptions.append(
+            "云量按 Open-Meteo 逐小时 cloud_cover >"
+            f"{cloud_stats.get('threshold_pct')}% 剔除访问；云量为网格预报值，"
+            "不代表成像时刻的实测云量。"
+        )
+    else:
+        assumptions.append(f"本次未过滤云量：{cloud_stats.get('reason') or '未启用'}。")
+    result["assumptions"] = assumptions
     notes = result.setdefault("notes", [])
     if isinstance(notes, list):
         notes.append(
@@ -309,14 +398,23 @@ def _annotate_result(
         )
         if blocked:
             notes.append(f"未参与选星 {len(blocked)} 颗，原因见 blocked_satellites。")
+        if cloud_stats.get("filtered"):
+            notes.append(
+                "云量按 Open-Meteo 逐小时 cloud_cover "
+                f">{cloud_stats.get('threshold_pct')}% 剔除访问（丢弃窗口 "
+                f"{cloud_stats.get('dropped_windows')} 个）。"
+            )
+        else:
+            notes.append(f"云量未过滤：{cloud_stats.get('reason') or '未启用'}。")
     return result
 
 
 def run_plan(spec: PlanSpec) -> dict[str, Any]:
     """执行一次规划；返回引擎结果（含 blocked_satellites / candidate_count）。"""
 
+    cloud_stats: dict[str, Any] = {"filtered": False, "reason": "未启用"}
     with session_scope() as session:
-        adcode, _name, aoi = _resolve_aoi(session, spec)
+        adcode, _name, aoi, lat, lon = _resolve_aoi(session, spec)
         candidates, blocked = collect_candidates(
             session, spec.sensor_types, spec.max_resolution_m
         )
@@ -329,10 +427,19 @@ def run_plan(spec: PlanSpec) -> dict[str, Any]:
         root = _write_workspace(candidates, aoi, adcode)
         try:
             payload = _payload(spec, candidates, adcode)
-            result = run_skill(payload, root=root)
+            try:
+                request = normalize_request(payload)
+            except SkillInputError as exc:
+                raise PlanError("bad_params", str(exc)) from exc
+            window_filter = None
+            if spec.cloud_filter:
+                window_filter = lambda store: _apply_cloud(  # noqa: E731
+                    store, spec, lat, lon, cloud_stats
+                )
+            result = execute_request(request, root=root, window_filter=window_filter)
         finally:
             shutil.rmtree(root, ignore_errors=True)
-    return _annotate_result(result, candidates, blocked)
+    return _annotate_result(result, candidates, blocked, cloud_stats)
 
 
 __all__ = [

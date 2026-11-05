@@ -105,6 +105,8 @@ class PlanCreate(BaseModel):
     exact_budget: bool | None = None
     max_windows: int = Field(default=10, ge=1, le=100)
     max_weak_areas: int = Field(default=10, ge=1, le=100)
+    cloud_filter: bool = True
+    cloud_threshold_pct: float = Field(default=70.0, gt=0, le=100)
 
     @model_validator(mode="after")
     def _check(self) -> PlanCreate:
@@ -140,6 +142,8 @@ class PlanCreate(BaseModel):
             exact_budget=self.exact_budget,
             max_windows=self.max_windows,
             max_weak_areas=self.max_weak_areas,
+            cloud_filter=self.cloud_filter,
+            cloud_threshold_pct=self.cloud_threshold_pct,
         )
 
 
@@ -228,6 +232,8 @@ def plan_options() -> dict[str, Any]:
             "allow_area_fallback": True,
             "max_windows": 10,
             "max_weak_areas": 10,
+            "cloud_filter": True,
+            "cloud_threshold_pct": 70,
         },
         "aoi": [
             {"code": item.code, "name": item.name, "level": item.level, "adcode": item.adcode}

@@ -29,8 +29,12 @@ the golden tests reproducible without a second service.
    `tle_record` stores CelesTrak OMM JSON and has no TLE lines, so the adapter
    writes OMM to the workspace and the loader builds `EarthSatellite` through
    `EarthSatellite.from_omm`.  The 3LE branch is unchanged.
-3. The vendor modules still import each other by their historical top-level
+3. `vendor/siriagent_skill/facade.py` adds an optional `window_filter` hook to
+   `execute_request`, applied after opportunity windows are computed and before
+   selection. RS-Service uses it for the Open-Meteo cloud filter; `run_skill`
+   passes `None`, so the original entry point is unchanged.
+4. The vendor modules still import each other by their historical top-level
    names, so `coverage_engine/__init__.py` adds `vendor/` to `sys.path` once.
 
-Do not edit vendored files beyond the two entries above; put integration logic
+Do not edit vendored files beyond the three entries above; put integration logic
 in `adapter.py` and keep a note here when a change is unavoidable.

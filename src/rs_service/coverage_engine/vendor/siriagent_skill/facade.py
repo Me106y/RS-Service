@@ -11,7 +11,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
-from typing import Any
+from typing import Any, Callable
 
 import regional_metrics
 import regional_opportunities
@@ -457,8 +457,13 @@ def execute_request(
     request: SkillRequest,
     *,
     root: str | Path | None = None,
+    window_filter: Callable[[Any], Any] | None = None,
 ) -> dict[str, Any]:
-    """完成一次同机 Skill 请求；选星模式内部只传播一次轨道。"""
+    """完成一次同机 Skill 请求；选星模式内部只传播一次轨道。
+
+    ``window_filter`` 是 RS-Service 的云量钩子：在机会窗口算完、选星之前
+    接收 OpportunityStore，返回过滤后的 store。默认 None，保持参考实现行为。
+    """
 
     project_root = Path(root).resolve() if root else PROJECT_ROOT
     total_start = time.perf_counter()
@@ -524,6 +529,8 @@ def execute_request(
         )
         _store_cached_opportunities(cache_key, store)
     opportunity_seconds = time.perf_counter() - opportunity_start
+    if window_filter is not None:
+        store = window_filter(store)
 
     selection_seconds = 0.0
     if request.operation == "coverage_only":

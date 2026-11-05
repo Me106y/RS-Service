@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from pydantic import ValidationError
@@ -90,6 +90,23 @@ def test_workspace_writes_omm_json_and_geojson(tmp_path) -> None:
         import shutil
 
         shutil.rmtree(root, ignore_errors=True)
+
+
+def test_cloud_filter_drops_windows_above_threshold() -> None:
+    from regional_opportunities import AccessWindow
+
+    from rs_service.coverage_engine.adapter import _filter_windows
+
+    start = datetime(2026, 11, 5, tzinfo=UTC)
+    cloudy = AccessWindow(0, 1, "A", 0, "c0", start, start + timedelta(minutes=10), 600.0)
+    clear = AccessWindow(
+        0, 1, "A", 1, "c1", start + timedelta(hours=2),
+        start + timedelta(hours=2, minutes=10), 600.0,
+    )
+    series = [(start, 85.0), (start + timedelta(hours=2), 10.0)]
+    kept, dropped = _filter_windows({(0, 0): (cloudy,), (0, 1): (clear,)}, series, 70)
+    assert dropped == 1
+    assert set(kept) == {(0, 1)}
 
 
 def test_five_tasks_only() -> None:
