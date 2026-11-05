@@ -574,7 +574,7 @@ def _run_once(spec: PlanSpec) -> dict[str, Any]:
             session, spec.sensor_types, spec.max_resolution_m
         )
         if not candidates:
-            if any("TLE" in item.get("reason", "") for item in blocked):
+            if blocked and all("TLE" in item.get("reason", "") for item in blocked):
                 raise PlanError(
                     "tle_stale",
                     "TLE 已超过 7 天，请先运行 `rs-service sync` 再规划",
