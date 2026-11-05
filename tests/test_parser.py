@@ -54,3 +54,13 @@ def test_seed_has_65_leo() -> None:
     assert sum(1 for item in sats if item["payload_public"]) == 65
     assert sum(1 for item in sats if not item["payload_public"]) == 0
     assert {item["category"] for item in sats} == {"commercial", "civil", "meteorology"}
+
+
+def test_primary_swath_pairs_resolution_not_wide_field() -> None:
+    from rs_service.db.seed import primary_swath_km
+
+    assert primary_swath_km("2 m / 8 m；60 km；16 m 宽幅 800 km") == 60.0
+    assert primary_swath_km("2 m / 8 m；90 km；16 m 宽幅 800 km") == 90.0
+    assert primary_swath_km("5 m / 10 m；115 km；30 m 高光谱 60 km") == 115.0
+    assert primary_swath_km("250 m 可见 / 1 km 红外；2900 km") == 2900.0
+    assert primary_swath_km(None) is None

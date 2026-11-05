@@ -18,11 +18,22 @@ AOI_PATH = Path(__file__).resolve().parents[3] / "data" / "aoi" / "hangzhou_3301
 
 
 def max_km(raw: str | None) -> float | None:
-    """从传感器文本里取最大的 km 数值，作为幅宽近似（仅供前端画足迹）。"""
+    """从传感器文本里取最大的 km 数值，作为兜底。"""
     if not raw:
         return None
     values = [float(item) for item in re.findall(r"(\d+(?:\.\d+)?)\s*km", raw)]
     return max(values) if values else None
+
+
+def primary_swath_km(raw: str | None) -> float | None:
+    """取第一个“纯幅宽”段，避免把 2m/8m 主载荷配成 16m 宽幅的 800 km。"""
+    if not raw:
+        return None
+    for segment in re.split(r"[；;]", raw):
+        match = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*km\s*", segment)
+        if match:
+            return float(match.group(1))
+    return max_km(raw)
 
 
 def normalize_alias(value: str) -> str:
@@ -90,7 +101,7 @@ def seed_catalog(session: Session, path: Path | None = None) -> dict[str, int]:
         sensor.sensor_name = item.get("sensor_type")
         sensor.sensor_type = item.get("sensor_type")
         sensor.raw_spec = item.get("raw_spec")
-        sensor.swath_km = max_km(item.get("raw_spec"))
+        sensor.swath_km = primary_swath_km(item.get("raw_spec"))
         if sat.orbit_regime == "GEO":
             sensor.swath_km = 2000.0
         sensor.confidence = item.get("confidence", "unknown")
