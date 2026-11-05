@@ -45,12 +45,12 @@ def test_parse_omm_requires_norad() -> None:
         parse_omm({"OBJECT_NAME": "X"})
 
 
-def test_seed_has_102_leo() -> None:
+def test_seed_has_65_leo() -> None:
     payload = load_seed()
     sats = payload["satellites"]
-    assert len(sats) == 102
-    assert len({item["norad"] for item in sats}) == 102
+    assert len(sats) == 65
+    assert len({item["norad"] for item in sats}) == 65
     assert {item["orbit_regime"] for item in sats} == {"LEO"}
-    assert sum(1 for item in sats if item["payload_public"]) == 90
-    assert sum(1 for item in sats if not item["payload_public"]) == 12
+    assert sum(1 for item in sats if item["payload_public"]) == 65
+    assert sum(1 for item in sats if not item["payload_public"]) == 0
     assert {item["category"] for item in sats} == {"commercial", "civil", "meteorology"}

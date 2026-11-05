@@ -23,8 +23,8 @@ ITEMS = [
         "BSTAR": 0.0001,
     },
     {
-        "OBJECT_NAME": "GAOFEN-3",
-        "NORAD_CAT_ID": 41727,
+        "OBJECT_NAME": "JILIN-1",
+        "NORAD_CAT_ID": 40961,
         "EPOCH": "2026-10-18T23:10:00.000000",
         "MEAN_MOTION": 14.6,
         "ECCENTRICITY": 0.001,

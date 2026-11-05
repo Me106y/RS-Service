@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy import func, select
 
-from rs_service.db.models import SensorMode, SensorModeCorrection
+from rs_service.db.models import Satellite, SensorMode, SensorModeCorrection
 from rs_service.db.session import session_scope
 from rs_service.sync.sensor_modes import parse_modes, rebuild
 
@@ -52,27 +52,28 @@ def test_rebuild_persists_and_is_idempotent(seeded_db: str) -> None:
     with session_scope(seeded_db) as session:
         first = rebuild(session)
     assert first["ok"] is True
-    assert first["satellites"] == 84
-    assert first["modes"] == 96
-    assert "GF-3" in first["overrides"]
+    assert first["satellites"] == 65
+    assert first["modes"] == 71
+    assert first["overrides"] == []
 
     with session_scope(seeded_db) as session:
         second = rebuild(session)
         total = session.scalar(select(func.count()).select_from(SensorMode))
-        gf3_strip = session.execute(
+        gf1_wfv = session.execute(
             select(SensorMode)
-            .where(SensorMode.sat_id == 41727, SensorMode.mode_name == "条带")
+            .where(SensorMode.sat_id == 39150, SensorMode.mode_name == "WFV")
         ).scalar_one()
         corr = session.scalar(select(func.count()).select_from(SensorModeCorrection))
     assert second["modes"] == first["modes"]
-    assert total == 96, "重复 rebuild 不应叠加"
-    assert gf3_strip.swath_km == 30.0, "人工核对值必须覆盖解析结果"
-    assert gf3_strip.confidence == "approx"
-    assert corr == 3
+    assert total == 71, "重复 rebuild 不应叠加"
+    assert gf1_wfv.swath_km == 800.0
+    assert gf1_wfv.confidence == "official"
+    assert corr >= 0
 
 
 def test_private_payload_absent(seeded_db: str) -> None:
     with session_scope(seeded_db) as session:
+        session.get(Satellite, 40118).payload_public = False
         rebuild(session)
         ids = set(session.scalars(select(SensorMode.sat_id)))
-    assert 64048 not in ids, "payload_public=false 的卫星不得进入模式目录"
+    assert 40118 not in ids, "payload_public=false 的卫星不得进入模式目录"

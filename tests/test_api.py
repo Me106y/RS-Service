@@ -3,7 +3,8 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from rs_service.api.app import create_app
-from rs_service.db.session import reset_engine
+from rs_service.db.models import Satellite
+from rs_service.db.session import reset_engine, session_scope
 from rs_service.settings import settings
 
 
@@ -16,10 +17,10 @@ def test_api_health_and_satellites(seeded_db: str) -> None:
 
         health = client.get("/api/v1/health").json()
         assert health["ok"] is True
-        assert health["satellites"] == 102
+        assert health["satellites"] == 65
 
         listing = client.get("/api/v1/satellites", params={"limit": 5}).json()
-        assert listing["total"] == 102
+        assert listing["total"] == 65
         assert len(listing["items"]) == 5
 
         detail = client.get("/api/v1/satellites/40118").json()
@@ -37,7 +38,9 @@ def test_api_health_and_satellites(seeded_db: str) -> None:
         boundary = client.get("/api/v1/aoi/hangzhou").json()
         assert len(boundary["features"][0]["geometry"]["coordinates"][0]) == 6406
 
-        hidden = client.get("/api/v1/satellites/64048").json()
+        with session_scope(seeded_db) as session:
+            session.get(Satellite, 40118).payload_public = False
+        hidden = client.get("/api/v1/satellites/40118").json()
         assert hidden["satellite"]["payload_public"] is False
         assert "raw_spec" not in hidden["sensor"]
     finally:

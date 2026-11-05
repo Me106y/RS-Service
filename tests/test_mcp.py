@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from rs_service.db.session import reset_engine
+from rs_service.db.models import Satellite
+from rs_service.db.session import reset_engine, session_scope
 from rs_service.mcp.server import get_satellite, list_satellites, sync_status
 from rs_service.settings import settings
 
@@ -11,13 +12,15 @@ def test_mcp_tools(seeded_db: str) -> None:
     reset_engine()
     try:
         listing = list_satellites()
-        assert listing["count"] == 102
+        assert listing["count"] == 65
 
         detail = get_satellite(40118)
         assert detail["ok"] is True
         assert detail["satellite"]["payload_public"] is True
 
-        hidden = get_satellite(64048)
+        with session_scope(seeded_db) as session:
+            session.get(Satellite, 40118).payload_public = False
+        hidden = get_satellite(40118)
         assert hidden["sensor"]["raw_spec"] is None
 
         status = sync_status()
