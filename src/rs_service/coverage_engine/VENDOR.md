@@ -24,9 +24,13 @@ the golden tests reproducible without a second service.
 1. `vendor/siriagent_skill/schemas.py` adds the `rs_service_db_v1` profile.
    RS-Service does not ship the 110-satellite frozen catalog; per-satellite
    geometry is injected through `satellite_profile_overrides`.
-2. No other engine logic is changed.  The vendor modules still import each
-   other by their historical top-level names, so `coverage_engine/__init__.py`
-   adds `vendor/` to `sys.path` once.
+2. `vendor/satellite_loader.py` extends `parse_tle_text` to accept an OMM JSON
+   payload (`{"satellites": [...]}`) in addition to 3LE text.  RS-Service's
+   `tle_record` stores CelesTrak OMM JSON and has no TLE lines, so the adapter
+   writes OMM to the workspace and the loader builds `EarthSatellite` through
+   `EarthSatellite.from_omm`.  The 3LE branch is unchanged.
+3. The vendor modules still import each other by their historical top-level
+   names, so `coverage_engine/__init__.py` adds `vendor/` to `sys.path` once.
 
-Do not edit vendored files beyond the profile entry above; put integration
-logic in `adapter.py` and keep a note here when a change is unavoidable.
+Do not edit vendored files beyond the two entries above; put integration logic
+in `adapter.py` and keep a note here when a change is unavoidable.

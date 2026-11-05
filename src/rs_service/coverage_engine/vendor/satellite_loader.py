@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import os
 import sys
 import tempfile
@@ -125,9 +126,25 @@ def _extract_norad_id(line1: str) -> Optional[int]:
 
 
 def parse_tle_text(text: str, ts=None) -> List[Satellite]:
-    """把 3LE 文本（名字+第1行+第2行）解析成 Satellite 包装对象列表。"""
+    """把 3LE 文本或 OMM JSON 解析成 Satellite 包装对象列表。
+
+    RS-Service 的 ``tle_record`` 只保存 CelesTrak OMM JSON（没有 TLE 两行），
+    因此适配层写出的工作文件是 ``{"satellites": [OMM, ...]}``。这里保留 3LE
+    分支，JSON 分支用 Skyfield 的 ``from_omm``，两条路最终都产出同一个包装类。
+    """
     if ts is None:
         ts = load.timescale(builtin=True)
+    stripped = text.lstrip()
+    if stripped.startswith("{"):
+        payload = json.loads(stripped)
+        rows = payload.get("satellites", []) if isinstance(payload, dict) else payload
+        sats: List[Satellite] = []
+        for row in rows:
+            orbit = EarthSatellite.from_omm(ts, row)
+            name = str(row.get("OBJECT_NAME") or row.get("name") or orbit.name or "")
+            norad = int(row.get("NORAD_CAT_ID") or row.get("norad_id") or orbit.model.satnum)
+            sats.append(Satellite(orbit, name, norad))
+        return sats
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     sats: List[Satellite] = []
     i = 0

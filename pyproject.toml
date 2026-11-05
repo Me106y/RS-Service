@@ -51,6 +51,7 @@ addopts = "-q"
 
 [tool.ruff]
 line-length = 100
+extend-exclude = ["src/rs_service/coverage_engine/vendor"]
 target-version = "py312"
 
 [tool.ruff.lint]
