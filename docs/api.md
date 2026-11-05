@@ -35,6 +35,26 @@ curl -s 'http://127.0.0.1:8766/api/v1/satellites?category=commercial&limit=5'
 curl -s http://127.0.0.1:8766/api/v1/satellites/40118
 ```
 
+## 成图规划 `/api/v1/plans`
+
+5 个选星任务由 RS-Service 的后端流程承担；前端只提交参数、轮询状态、请求报告。
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/plan-options` | 任务、必填/高级字段、默认值、传感器类型、AOI 列表、可规划数量 |
+| POST | `/plans` | 建任务，返回 202 + `job_id`；任务在进程内排队 |
+| GET | `/plans/{job_id}` | `queued` / `running` / `completed` / `failed` + 结果或错误 |
+| POST | `/plans/{job_id}/report` | 用已完成结果渲染四节 HTML，返回 `reports/imaging-plan/...` 相对路径 |
+| GET | `/plans/{job_id}/report` | 报告 HTML 本体 |
+
+任务：`task1` 最少星达覆盖率、`task2` 最少星达重访、`task3` 给定星数最大化达标面积、
+`task4` 给定星数最小化面积分位 MRT、`task5` 给定星数最小化 ART。
+
+- AOI 支持省/市/区县 adcode 或 `POLYGON` WKT；只允许浙江省内。
+- 目录 65 颗（61 光学 + 4 高光谱）；SAR 缺原生入射角带，暂不参与。
+- 云量默认按 Open-Meteo 逐小时 `cloud_cover > 70%` 剔除访问；取不到时不过滤并在 assumptions 说明。
+- 任务状态在进程内；重启丢任务，`reports/imaging-plan/<job_id>/` 下的报告文件保留，`latest` 指向最近一次。
+
 ## MCP（Streamable HTTP）
 
 启动：`rs-service serve-mcp --port 8765`，端点为 `http://127.0.0.1:8765/mcp`。
@@ -50,7 +70,6 @@ DSH 侧工具名带前缀：`mcp__rs-service__<tool>`。
 | `current_position` | `sat_id` | 当前星下点 |
 | `sync_status` | — | 最近同步、重试状态、TLE 最大年龄 |
 | `list_aoi` | `level?`, `query?` | 浙江省级 / 市级 / 区县 AOI（adcode、名称、bbox、面积） |
-| `plan_coverage` | `mode`, `aoi`, `target_coverage_pct?`, `n_sats?`, `hours?`, `persist?` … | 编成方案（星数 / 覆盖率 / 重访 / 时间轴）；缺参返回 `missing_params` + `schema` |
 
 后续工具（`get_tle`、`propagate`、`run_command`）按需求文档 §5.2 逐步补齐；每个工具同时更新本文件与 `COMMANDS.md`。
 
