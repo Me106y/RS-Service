@@ -87,6 +87,7 @@ def test_render_report_contains_four_sections() -> None:
         assert text in html
     assert "MAP_DATA" not in html
     assert "目标 90%" in html
+    assert "时间进度" in html
 
 
 def test_write_report_writes_files_and_latest(tmp_path: Path) -> None:

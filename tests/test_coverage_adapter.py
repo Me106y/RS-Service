@@ -154,6 +154,17 @@ def test_run_plan_auto_expand_caps_at_72(monkeypatch) -> None:
     assert result["auto_expand"]["attempts"] == 2
 
 
+def test_auto_expand_reason_at_72h_cap(monkeypatch) -> None:
+    from rs_service.coverage_engine import adapter
+
+    monkeypatch.setattr(
+        adapter, "_run_once", lambda spec: {"feasible": False, "assumptions": []}
+    )
+    result = adapter.run_plan(PlanSpec(operation="task1", auto_expand=True, horizon_h=72))
+    assert result["window"]["attempts"] == 1
+    assert "自动扩窗上限" in result["auto_expand"]["reason"]
+
+
 def test_task1_auto_expand_ladder_only_for_task1() -> None:
     task1 = PlanSpec(operation="task1", auto_expand=True, horizon_h=8)
     assert _horizons(task1) == [8.0, 72.0]

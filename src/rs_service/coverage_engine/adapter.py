@@ -652,12 +652,23 @@ def run_plan(spec: PlanSpec) -> dict[str, Any]:
             "expanded": expanded,
             "attempts": attempt,
         }
+        reason = None
+        if spec.auto_expand:
+            if result.get("feasible"):
+                reason = "当前窗口已达标，无需扩窗" if not expanded else "自动扩窗后达标"
+            elif not expanded and spec.horizon_h >= 72.0 - 1e-9:
+                reason = "当前窗口已是自动扩窗上限 72h；7 天请手动设 168h"
+            elif not expanded:
+                reason = "当前窗口未达标，但没有更长的自动档位"
+            else:
+                reason = "已自动扩窗到 72h，仍未达标"
         result["auto_expand"] = {
             "requested": bool(spec.auto_expand),
             "supported": spec.operation
             in {"task1", "task_1_min_satellites_temporal"},
             "expanded": expanded,
             "attempts": attempt,
+            "reason": reason,
         }
         if expanded:
             result.setdefault("assumptions", []).append(

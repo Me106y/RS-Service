@@ -291,7 +291,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
 
   <section id="cover">
     <h2>覆盖与回放</h2>
-    <p class="lede">每个点是一个裁剪网格单元；颜色表示首次覆盖它的卫星。拖动时间轴查看覆盖累积，点按播放按 {{ speed_label }} 推进。</p>
+    <p class="lede">每个点是一个裁剪网格单元；颜色表示首次覆盖它的卫星。拖动时间轴查看覆盖累积，点按播放按 {{ speed_label }} 推进；右侧百分比是时间进度，不是覆盖率。</p>
     <div class="mapwrap">
       <canvas id="map" width="1280" height="720" role="img" aria-label="覆盖分布与回放"></canvas>
       <div class="transport">
@@ -299,7 +299,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
           <svg id="ico" viewBox="0 0 16 16"><path d="M4 2l10 6-10 6z"/></svg>
         </button>
         <input id="scrub" type="range" min="0" max="{{ events_count }}" value="0" step="1" aria-label="回放时间轴">
-        <div class="clock"><span id="now">—</span> · <span class="pct" id="pct">0%</span></div>
+        <div class="clock"><span id="now">—</span> · <span class="pct">时间进度 <b id="pct">0%</b></span></div>
       </div>
       <div class="legend">
         {% for s in sats %}<span><span class="swatch" style="--c:{{ s.color }};--c-light:{{ s.color_light }}"></span>{{ s.name }}</span>{% endfor %}
