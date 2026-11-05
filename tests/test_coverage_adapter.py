@@ -10,9 +10,11 @@ from rs_service.coverage_engine.adapter import (
     ALONG_TRACK_HALF_ANGLE_DEG,
     Candidate,
     PlanSpec,
+    _horizons,
     _parse_resolution_m,
     _payload,
     _write_workspace,
+    tle_age_hours,
 )
 from rs_service.plan_api import TASKS, PlanCreate
 
@@ -33,6 +35,8 @@ def _candidate() -> Candidate:
         resolution_m=2.0,
         swath_km=800.0,
         omm={"NORAD_CAT_ID": 39150, "OBJECT_NAME": "GF-1"},
+        tle_epoch_utc="2026-11-05T00:00:00Z",
+        tle_age_hours=6.0,
     )
 
 
@@ -107,6 +111,72 @@ def test_cloud_filter_drops_windows_above_threshold() -> None:
     kept, dropped = _filter_windows({(0, 0): (cloudy,), (0, 1): (clear,)}, series, 70)
     assert dropped == 1
     assert set(kept) == {(0, 1)}
+
+
+def test_tle_age_hours() -> None:
+    now = datetime(2026, 11, 5, 12, tzinfo=UTC)
+    assert tle_age_hours("2026-11-05T06:00:00Z", now) == 6.0
+    assert tle_age_hours("2026-11-05T00:00:00", now) == 12.0
+    assert tle_age_hours(None, now) is None
+    assert tle_age_hours("not-a-time", now) is None
+
+
+def test_run_plan_auto_expand_stops_on_first_feasible(monkeypatch) -> None:
+    from rs_service.coverage_engine import adapter
+
+    calls: list[float] = []
+
+    def fake_run(spec: PlanSpec) -> dict:
+        calls.append(spec.horizon_h)
+        return {"feasible": spec.horizon_h >= 72.0, "assumptions": []}
+
+    monkeypatch.setattr(adapter, "_run_once", fake_run)
+    result = adapter.run_plan(PlanSpec(operation="task1", auto_expand=True, horizon_h=8))
+    assert calls == [8.0, 72.0]
+    assert result["window"]["used_horizon_h"] == 72.0
+    assert result["window"]["expanded"] is True
+    assert result["auto_expand"]["attempts"] == 2
+
+
+def test_run_plan_auto_expand_caps_at_72(monkeypatch) -> None:
+    from rs_service.coverage_engine import adapter
+
+    calls: list[float] = []
+
+    def fake_run(spec: PlanSpec) -> dict:
+        calls.append(spec.horizon_h)
+        return {"feasible": False, "assumptions": []}
+
+    monkeypatch.setattr(adapter, "_run_once", fake_run)
+    result = adapter.run_plan(PlanSpec(operation="task1", auto_expand=True, horizon_h=8))
+    assert calls == [8.0, 72.0]
+    assert result["window"]["used_horizon_h"] == 72.0
+    assert result["auto_expand"]["attempts"] == 2
+
+
+def test_task1_auto_expand_ladder_only_for_task1() -> None:
+    task1 = PlanSpec(operation="task1", auto_expand=True, horizon_h=8)
+    assert _horizons(task1) == [8.0, 72.0]
+    assert _horizons(PlanSpec(operation="task1", auto_expand=True, horizon_h=72)) == [72.0]
+    task2 = PlanSpec(operation="task2", auto_expand=True, horizon_h=8)
+    assert _horizons(task2) == [8.0]
+
+
+def test_auto_expand_rejected_for_other_tasks() -> None:
+    with pytest.raises(ValidationError):
+        PlanCreate(
+            operation="task2",
+            aoi_code="330100",
+            mrt_target_minutes=24,
+            auto_expand=True,
+        )
+    model = PlanCreate(
+        operation="task1",
+        aoi_code="330100",
+        temporal_coverage_target_pct=10,
+        auto_expand=True,
+    )
+    assert model.to_spec().auto_expand is True
 
 
 def test_five_tasks_only() -> None:

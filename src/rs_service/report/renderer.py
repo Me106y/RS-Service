@@ -71,6 +71,12 @@ def _notes(result: dict[str, Any]) -> list[str]:
     blocked = result.get("blocked_satellites") or []
     if blocked:
         notes.append(f"未参与选星 {len(blocked)} 颗，原因见任务结果。")
+    tle = result.get("tle") or {}
+    if tle.get("max_age_hours") is not None:
+        notes.append(
+            f"TLE 最大年龄 {tle['max_age_hours']:g} 小时"
+            f"{'（>72h，结果标 degraded）' if tle.get('degraded') else ''}。"
+        )
     notes.append("TLE 每日同步；SGP4 在 LEO 约 1 km/天，结果只用于可行性初判。")
     return list(dict.fromkeys(notes))
 
@@ -107,7 +113,22 @@ def render_report(result: dict[str, Any]) -> str:
     city = result.get("city") or {}
     start = (result.get("input_summary") or {}).get("start_utc")
     end = (result.get("input_summary") or {}).get("end_utc")
-    hours = (result.get("input_summary") or {}).get("analysis_horizon_h")
+    window = result.get("window") or {}
+    hours = window.get("used_horizon_h") or (result.get("input_summary") or {}).get(
+        "analysis_horizon_h"
+    )
+    window_note = (
+        f"请求 {window.get('requested_horizon_h'):g}h，自动扩窗"
+        if window.get("expanded") and window.get("requested_horizon_h") is not None
+        else ""
+    )
+    targets = result.get("targets") or {}
+    target_pct = targets.get("temporal_coverage_pct")
+    target_label = (
+        f"达标面积（目标 {target_pct:g}%）"
+        if target_pct is not None
+        else "达标面积"
+    )
     label = OPERATION_LABELS.get(result.get("operation", ""), result.get("operation", "成图规划"))
     count = int(cards.get("satellite_count") or len(sats))
     area_pct = float(cards.get("qualified_area_pct") or 0.0)
@@ -130,6 +151,9 @@ def render_report(result: dict[str, Any]) -> str:
         window_start=_bj(start),
         window_end=_bj(end),
         window_hours=hours,
+        window_note=window_note,
+        target_label=target_label,
+        target_pct=target_pct,
         feasible=bool(result.get("feasible")),
         optimality=result.get("optimality") or "—",
         sat_count=count,

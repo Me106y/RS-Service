@@ -11,6 +11,9 @@ def fake_result() -> dict:
         "operation": "task_1_min_satellites_temporal",
         "feasible": True,
         "optimality": "feasible_heuristic",
+        "targets": {"temporal_coverage_pct": 90.0},
+        "window": {"requested_horizon_h": 8, "used_horizon_h": 8, "expanded": False},
+        "tle": {"max_age_hours": 6.0, "degraded": False},
         "summary_cards": {
             "satellite_count": 1,
             "qualified_area_pct": 90.0,
@@ -83,6 +86,7 @@ def test_render_report_contains_four_sections() -> None:
     for text in ["卫星构成", "覆盖与回放", "推荐计划", "口径与精度", "薄弱区", "杭州市", "GF-1"]:
         assert text in html
     assert "MAP_DATA" not in html
+    assert "目标 90%" in html
 
 
 def test_write_report_writes_files_and_latest(tmp_path: Path) -> None:
