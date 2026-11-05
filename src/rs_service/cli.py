@@ -9,7 +9,6 @@ from typing import Any
 import typer
 from sqlalchemy import func, select
 
-from .astro import planner
 from .db.models import Satellite, Sensor, SensorMode, SyncRun, SyncState, TleCurrent
 from .db.seed import DEFAULT_SEED_PATH, seed_aoi, seed_catalog
 from .db.session import init_db, session_scope
@@ -157,7 +156,7 @@ def passes(
     db: str | None = typer.Option(None, "--db"),
 ) -> None:
     """查询单星在指定地点的过境窗口。"""
-    from datetime import datetime, timedelta
+    from datetime import timedelta
 
     from .astro.service import passes_for_sat
 
@@ -184,7 +183,7 @@ def track(
     db: str | None = typer.Option(None, "--db"),
 ) -> None:
     """查询单星星下点轨迹。"""
-    from datetime import datetime, timedelta
+    from datetime import timedelta
 
     from .astro.service import track_for_sat
 
@@ -223,52 +222,6 @@ def info() -> None:
             "mcp": f"{settings.mcp_host}:{settings.mcp_port}",
         }
     )
-
-
-plan_app = typer.Typer(no_args_is_help=True, help="卫星成图编成")
-app.add_typer(plan_app, name="plan")
-
-
-@plan_app.command("coverage")
-def plan_coverage_cmd(
-    mode: str = typer.Option(..., "--mode", help=" / ".join(planner.MODES)),
-    aoi: str = typer.Option(..., "--aoi", help="adcode / 名称 / POLYGON WKT"),
-    max_res: float = typer.Option(..., "--max-res", help="最大分辨率（米）"),
-    target: float | None = typer.Option(None, "--target", help="目标覆盖率（%），只有 min_sats_for_coverage 必填"),
-    n_sats: int | None = typer.Option(None, "--n-sats"),
-    max_gap: float | None = typer.Option(None, "--max-gap", help="目标最大间隔（小时）"),
-    sensor_types: str = typer.Option("optical,sar,hyperspectral", "--types"),
-    hours: int = typer.Option(72, "--hours"),
-    start: str | None = typer.Option(None, "--start", help="ISO8601 UTC"),
-    extend: bool = typer.Option(True, "--extend/--no-extend"),
-    out: str | None = typer.Option(None, "--out", help="把 JSON 写到文件"),
-    persist: bool = typer.Option(True, "--persist/--no-persist", help="写 coverage_snapshot"),
-    cloud_filter: bool = typer.Option(True, "--cloud-filter/--no-cloud-filter", help="光学星按云量过滤"),
-    sun_min: float | None = typer.Option(None, "--sun-min", help="光学太阳高度门限（度，默认 settings 10）"),
-    db: str | None = typer.Option(None, "--db"),
-) -> None:
-    """求解编成方案，输出 JSON（供 skill 渲染报告）。"""
-    t0 = None
-    if start:
-        t0 = datetime.fromisoformat(start.replace("Z", "+00:00"))
-    try:
-        with session_scope(db) as session:
-            data = planner.solve(
-                session, mode=mode, aoi=aoi, max_resolution_m=max_res,
-                target_coverage_pct=target, n_sats=n_sats, target_max_gap_hours=max_gap,
-                sensor_types=[x.strip() for x in sensor_types.split(",") if x.strip()],
-                hours=min(hours, planner.MAX_HOURS), start=t0, extend=extend, persist=persist,
-                cloud_filter=cloud_filter, optical_sun_min_deg=sun_min,
-            )
-    except planner.PlanError as err:
-        _dump({"ok": False, "error": err.code, **err.extra})
-        raise typer.Exit(code=2) from err
-    payload = {"ok": True, "data": data, "accuracy_note": planner.ACCURACY_NOTE}
-    if out:
-        Path(out).write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
-        _dump({"ok": True, "out": out, "sat_count": data["plan"]["sat_count"]})
-    else:
-        _dump(payload)
 
 
 sensor_modes_app = typer.Typer(no_args_is_help=True, help="传感器成像模式目录")
