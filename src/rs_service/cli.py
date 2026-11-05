@@ -2,17 +2,21 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict
-from datetime import UTC
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import typer
 from sqlalchemy import func, select
 
-from .db.models import Satellite, Sensor, SyncRun, SyncState, TleCurrent
+from .astro import planner
+from .db.models import Satellite, Sensor, SensorMode, SyncRun, SyncState, TleCurrent
 from .db.seed import DEFAULT_SEED_PATH, seed_aoi, seed_catalog
 from .db.session import init_db, session_scope
 from .settings import settings
 from .sync.runner import run_sync
+from .sync.sensor_modes import PARSER_VERSION
+from .sync.sensor_modes import rebuild as rebuild_sensor_modes
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, help="RS-Service CLI")
 
@@ -24,7 +28,7 @@ def _dump(payload: Any) -> None:
 @app.command()
 def init(
     db: str | None = typer.Option(None, "--db", help="数据库 URL；默认 ~/.local/share/rs-service/rs.db"),
-    seed: str | None = typer.Option(None, "--seed", help="111 颗卫星种子 JSON 路径"),
+    seed: str | None = typer.Option(None, "--seed", help="102 颗卫星种子 JSON 路径"),
 ) -> None:
     """建表并写入卫星目录种子。"""
     init_db(db)
@@ -217,6 +221,114 @@ def info() -> None:
             "retry_delays": settings.retry_delays(),
             "api": f"{settings.api_host}:{settings.api_port}",
             "mcp": f"{settings.mcp_host}:{settings.mcp_port}",
+        }
+    )
+
+
+plan_app = typer.Typer(no_args_is_help=True, help="卫星成图编成")
+app.add_typer(plan_app, name="plan")
+
+
+@plan_app.command("coverage")
+def plan_coverage_cmd(
+    mode: str = typer.Option(..., "--mode", help=" / ".join(planner.MODES)),
+    aoi: str = typer.Option(..., "--aoi", help="adcode / 名称 / POLYGON WKT"),
+    max_res: float = typer.Option(..., "--max-res", help="最大分辨率（米）"),
+    target: float | None = typer.Option(None, "--target", help="目标覆盖率（%），只有 min_sats_for_coverage 必填"),
+    n_sats: int | None = typer.Option(None, "--n-sats"),
+    max_gap: float | None = typer.Option(None, "--max-gap", help="目标最大间隔（小时）"),
+    sensor_types: str = typer.Option("optical,sar,hyperspectral", "--types"),
+    hours: int = typer.Option(72, "--hours"),
+    start: str | None = typer.Option(None, "--start", help="ISO8601 UTC"),
+    extend: bool = typer.Option(True, "--extend/--no-extend"),
+    out: str | None = typer.Option(None, "--out", help="把 JSON 写到文件"),
+    persist: bool = typer.Option(True, "--persist/--no-persist", help="写 coverage_snapshot"),
+    cloud_filter: bool = typer.Option(True, "--cloud-filter/--no-cloud-filter", help="光学星按云量过滤"),
+    sun_min: float | None = typer.Option(None, "--sun-min", help="光学太阳高度门限（度，默认 settings 10）"),
+    db: str | None = typer.Option(None, "--db"),
+) -> None:
+    """求解编成方案，输出 JSON（供 skill 渲染报告）。"""
+    t0 = None
+    if start:
+        t0 = datetime.fromisoformat(start.replace("Z", "+00:00"))
+    try:
+        with session_scope(db) as session:
+            data = planner.solve(
+                session, mode=mode, aoi=aoi, max_resolution_m=max_res,
+                target_coverage_pct=target, n_sats=n_sats, target_max_gap_hours=max_gap,
+                sensor_types=[x.strip() for x in sensor_types.split(",") if x.strip()],
+                hours=min(hours, planner.MAX_HOURS), start=t0, extend=extend, persist=persist,
+                cloud_filter=cloud_filter, optical_sun_min_deg=sun_min,
+            )
+    except planner.PlanError as err:
+        _dump({"ok": False, "error": err.code, **err.extra})
+        raise typer.Exit(code=2) from err
+    payload = {"ok": True, "data": data, "accuracy_note": planner.ACCURACY_NOTE}
+    if out:
+        Path(out).write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
+        _dump({"ok": True, "out": out, "sat_count": data["plan"]["sat_count"]})
+    else:
+        _dump(payload)
+
+
+sensor_modes_app = typer.Typer(no_args_is_help=True, help="传感器成像模式目录")
+app.add_typer(sensor_modes_app, name="sensor-modes")
+
+
+@sensor_modes_app.command("rebuild")
+def sensor_modes_rebuild(
+    db: str | None = typer.Option(None, "--db"),
+    overrides: str | None = typer.Option(None, "--overrides", help="人工核对值 JSON 路径"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="只解析不写库"),
+) -> None:
+    """从 sensor.raw_spec 重建 sensor_mode（成像类型 ∧ 载荷公开 ∧ LEO）。"""
+    with session_scope(db) as session:
+        result = rebuild_sensor_modes(
+            session, Path(overrides) if overrides else None, dry_run=dry_run
+        )
+    _dump(result)
+
+
+@sensor_modes_app.command("list")
+def sensor_modes_list(
+    db: str | None = typer.Option(None, "--db"),
+    max_res: float | None = typer.Option(None, "--max-res", help="只看分辨率不差于该值的卫星"),
+    sensor_type: str | None = typer.Option(None, "--type", help="optical / sar / hyperspectral"),
+) -> None:
+    """列出已入库的成像模式。"""
+    with session_scope(db) as session:
+        stmt = (
+            select(SensorMode, Satellite, Sensor)
+            .join(Satellite, Satellite.sat_id == SensorMode.sat_id)
+            .join(Sensor, Sensor.sat_id == SensorMode.sat_id)
+            .order_by(SensorMode.resolution_m)
+        )
+        if max_res is not None:
+            stmt = stmt.where(SensorMode.resolution_m <= max_res)
+        if sensor_type is not None:
+            stmt = stmt.where(Sensor.sensor_type == sensor_type)
+        rows = session.execute(stmt).all()
+    if not rows:
+        _dump({"ok": False, "error": "sensor_mode 为空，先运行 sensor-modes rebuild"})
+        raise typer.Exit(code=1)
+    _dump(
+        {
+            "ok": True,
+            "count": len(rows),
+            "parser_version": PARSER_VERSION,
+            "items": [
+                {
+                    "norad": mode.sat_id,
+                    "name": sat.name,
+                    "sensor_type": sensor.sensor_type,
+                    "mode": mode.mode_name,
+                    "resolution_m": mode.resolution_m,
+                    "swath_km": mode.swath_km,
+                    "is_default": mode.is_default,
+                    "confidence": mode.confidence,
+                }
+                for mode, sat, sensor in rows
+            ],
         }
     )
 

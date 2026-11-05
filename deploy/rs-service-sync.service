@@ -6,6 +6,6 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 WorkingDirectory=%h/桌面/RS-Service
-Environment=RS_DB_PATH=%h/.local/share/rs-service/rs.db
+EnvironmentFile=-%h/桌面/RS-Service/.env
 ExecStart=%h/桌面/RS-Service/.venv/bin/rs-service sync
 Nice=10

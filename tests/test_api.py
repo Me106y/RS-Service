@@ -16,10 +16,10 @@ def test_api_health_and_satellites(seeded_db: str) -> None:
 
         health = client.get("/api/v1/health").json()
         assert health["ok"] is True
-        assert health["satellites"] == 111
+        assert health["satellites"] == 102
 
         listing = client.get("/api/v1/satellites", params={"limit": 5}).json()
-        assert listing["total"] == 111
+        assert listing["total"] == 102
         assert len(listing["items"]) == 5
 
         detail = client.get("/api/v1/satellites/40118").json()
@@ -28,8 +28,11 @@ def test_api_health_and_satellites(seeded_db: str) -> None:
         assert detail["sensor"]["raw_spec"]
 
         aois = client.get("/api/v1/aoi").json()
-        assert aois["items"][0]["code"] == "330100"
-        assert 16_000 < aois["items"][0]["area_km2"] < 17_500
+        codes = {item["code"] for item in aois["items"]}
+        assert "330100" in codes and "330000" in codes
+        hz = next(i for i in aois["items"] if i["code"] == "330100")
+        assert 16_000 < hz["area_km2"] < 17_500
+        assert hz["level"] == "city"
 
         boundary = client.get("/api/v1/aoi/hangzhou").json()
         assert len(boundary["features"][0]["geometry"]["coordinates"][0]) == 6406

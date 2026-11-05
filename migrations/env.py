@@ -5,8 +5,8 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from rs_service.db.base import Base
 from rs_service.db import models  # noqa: F401  (register tables)
+from rs_service.db.base import Base
 from rs_service.settings import settings
 
 config = context.config

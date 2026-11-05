@@ -7,8 +7,9 @@ from mcp.server.mcpserver import MCPServer
 from sqlalchemy import select
 
 from .. import __version__
+from ..astro import planner
 from ..astro.service import all_positions, passes_for_sat, position_now, track_for_sat
-from ..db.models import Satellite, Sensor, SyncRun, SyncState, TleCurrent
+from ..db.models import Aoi, Satellite, Sensor, SyncRun, SyncState, TleCurrent
 from ..db.session import session_scope
 from ..settings import settings
 
@@ -25,9 +26,106 @@ mcp = MCPServer(
 )
 
 
+PARAM_SCHEMA = {
+    "mode": {"type": "string", "required": True,
+             "options": list(planner.MODES),
+             "desc": "任务模式"},
+    "aoi": {"type": "string|array", "required": True,
+            "desc": "adcode / 名称 / POLYGON WKT，可传列表取并集"},
+    "max_resolution_m": {"type": "number", "required": True, "unit": "m",
+                         "desc": "分辨率不差于此值（数值越小越清晰）"},
+    "target_coverage_pct": {"type": "number", "required_when": ["min_sats_for_coverage"],
+                            "range": [1, 100], "unit": "%",
+                            "desc": "目标覆盖率；只有 min_sats_for_coverage 必填，其余模式覆盖率是输出"},
+    "n_sats": {"type": "integer", "required_when": ["max_coverage_for_n", "min_wait_for_n"],
+               "range": [1, 20]},
+    "target_max_gap_hours": {"type": "number", "required_when": ["min_sats_for_revisit"], "unit": "h"},
+    "sensor_types": {"type": "array", "default": ["optical", "sar", "hyperspectral"],
+                     "options": ["optical", "sar", "hyperspectral"]},
+    "hours": {"type": "integer", "default": 72, "max": planner.MAX_HOURS,
+              "desc": "计算时间窗（小时）。给定 N 颗的模式按此窗口出结果，不自动扩窗"},
+    "start": {"type": "string", "default": "now", "format": "ISO8601 UTC"},
+    "optical_sun_min_deg": {"type": "number", "default": 10.0, "unit": "°",
+                            "desc": "光学/高光谱成像的太阳高度门限；夜间访问不计入覆盖"},
+    "extend": {"type": "boolean", "default": True,
+               "desc": "仅 min_sats_for_coverage 生效：达不到目标时自动扩窗 72h→7d→14d"},
+}
+
+
+def _missing(err: planner.PlanError) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "error": err.code,
+        "missing": err.extra.get("missing", []),
+        "schema": {k: v for k, v in PARAM_SCHEMA.items() if k in err.extra.get("missing", [])},
+        **{k: v for k, v in err.extra.items() if k != "missing"},
+        "accuracy_note": ACCURACY_NOTE,
+        "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+
+
+@mcp.tool()
+def plan_coverage(
+    mode: str | None = None,
+    aoi: str | list[str] | None = None,
+    max_resolution_m: float | None = None,
+    target_coverage_pct: float | None = None,
+    n_sats: int | None = None,
+    target_max_gap_hours: float | None = None,
+    sensor_types: list[str] | None = None,
+    hours: int = 72,
+    start: str | None = None,
+    extend: bool = True,
+    persist: bool = True,
+    cloud_filter: bool = True,
+    cloud_threshold: float = 70.0,
+    optical_sun_min_deg: float | None = None,
+) -> dict[str, Any]:
+    """求解卫星成图编成方案：给定覆盖率/重访/星数，算出最少需要哪几颗、能覆盖多少。
+
+    `min_sats_for_coverage` 需要 target_coverage_pct；`min_sats_for_revisit` 需要
+    target_max_gap_hours；`max_coverage_for_n` / `min_wait_for_n` 需要 n_sats 和 hours，
+    覆盖率是输出（传了也会被忽略），并按给定窗口计算、不自动扩窗。
+
+    参数不全时不猜，返回 {"ok": false, "error": "missing_params", "missing": [...], "schema": {...}}。
+    """
+    if not mode:
+        return _missing(planner.PlanError("missing_params", missing=["mode"]))
+    t0 = None
+    if start:
+        try:
+            t0 = datetime.fromisoformat(start.replace("Z", "+00:00"))
+        except ValueError:
+            return {"ok": False, "error": "bad_start", "start": start, "accuracy_note": ACCURACY_NOTE}
+    try:
+        with session_scope() as session:
+            data = planner.solve(
+                session,
+                mode=mode, aoi=aoi or "", max_resolution_m=max_resolution_m or 0,
+                target_coverage_pct=target_coverage_pct,
+                n_sats=n_sats, target_max_gap_hours=target_max_gap_hours,
+                sensor_types=sensor_types, hours=min(hours, planner.MAX_HOURS),
+                start=t0, extend=extend, persist=persist,
+                cloud_filter=cloud_filter, cloud_threshold=cloud_threshold,
+                optical_sun_min_deg=optical_sun_min_deg,
+            )
+    except planner.PlanError as err:
+        if err.code == "missing_params":
+            return _missing(err)
+        return {"ok": False, "error": err.code, **err.extra, "accuracy_note": ACCURACY_NOTE}
+    return {
+        "ok": True,
+        "data": data,
+        "accuracy_note": ACCURACY_NOTE,
+        "stale": False,
+        "degraded": False,
+        "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+
+
 @mcp.tool()
 def list_satellites(category: str | None = None, orbit: str | None = None) -> dict[str, Any]:
-    """List the 111 domestic satellites, optionally filtered by category or orbit regime."""
+    """List the 102 domestic LEO satellites, optionally filtered by category or orbit regime."""
     with session_scope() as session:
         stmt = select(Satellite)
         if category:
@@ -49,6 +147,40 @@ def list_satellites(category: str | None = None, orbit: str | None = None) -> di
             ],
             "accuracy_note": ACCURACY_NOTE,
         }
+
+
+@mcp.tool()
+def list_aoi(level: str | None = None, query: str | None = None) -> dict[str, Any]:
+    """List supported AOIs (only Zhejiang is in scope). Use these as the question options."""
+    with session_scope() as session:
+        stmt = select(Aoi).order_by(Aoi.code)
+        if level:
+            stmt = stmt.where(Aoi.level == level)
+        rows = list(session.scalars(stmt))
+    if query:
+        needle = query.strip().lower()
+        rows = [
+            row
+            for row in rows
+            if needle in (row.name or "").lower() or needle in (row.adcode or "")
+        ]
+    return {
+        "ok": True,
+        "count": len(rows),
+        "scope": "zhejiang_only",
+        "items": [
+            {
+                "code": row.code,
+                "name": row.name,
+                "level": row.level,
+                "adcode": row.adcode,
+                "bbox": [row.min_lon, row.min_lat, row.max_lon, row.max_lat],
+                "area_km2": row.area_km2,
+            }
+            for row in rows
+        ],
+        "accuracy_note": ACCURACY_NOTE,
+    }
 
 
 @mcp.tool()

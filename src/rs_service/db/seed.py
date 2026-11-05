@@ -133,36 +133,41 @@ def _now() -> str:
 
 
 def seed_aoi(session: Session, path: Path | None = None) -> dict[str, int]:
-    """把杭州 WGS84 市界写入 aoi 表（code=330100）。"""
-    source = path or AOI_PATH
-    payload = json.loads(source.read_text(encoding="utf-8"))
-    feature = payload["features"][0]
-    ring = feature["geometry"]["coordinates"][0]
-    props = feature["properties"]
-    wkt = "POLYGON((" + ",".join(f"{lon} {lat}" for lon, lat in ring) + "))"
-    min_lon, min_lat, max_lon, max_lat = props["bbox"]
-    area = _ring_area_km2(ring)
-
-    aoi = session.scalar(select(Aoi).where(Aoi.code == "330100"))
-    inserted = 0
-    if aoi is None:
-        aoi = Aoi(code="330100")
-        session.add(aoi)
-        inserted = 1
-    aoi.name = props.get("name", "杭州市")
-    aoi.level = "city"
-    aoi.adcode = "330100"
-    aoi.geom_wkt = wkt
-    aoi.min_lat = min_lat
-    aoi.min_lon = min_lon
-    aoi.max_lat = max_lat
-    aoi.max_lon = max_lon
-    aoi.area_km2 = area
-    aoi.source = props.get("source", "amap_district")
-    aoi.datum = "wgs84"
-    aoi.accuracy = props.get("accuracy", "approx")
+    """把 data/aoi/*.geojson 写入 aoi 表，支持省 / 市 / 区县三级。"""
+    folder = (path.parent if path else AOI_PATH.parent)
+    files = sorted(folder.glob("*.geojson")) if path is None else [path]
+    inserted = updated = 0
+    levels: dict[str, int] = {}
+    for file in files:
+        payload = json.loads(file.read_text(encoding="utf-8"))
+        for feature in payload.get("features", []):
+            props = feature["properties"]
+            code = str(props.get("code") or props.get("adcode"))
+            ring = feature["geometry"]["coordinates"][0]
+            wkt = "POLYGON((" + ",".join(f"{p[0]} {p[1]}" for p in ring) + "))"
+            bbox = props.get("bbox") or [
+                min(p[0] for p in ring), min(p[1] for p in ring),
+                max(p[0] for p in ring), max(p[1] for p in ring),
+            ]
+            row = session.scalar(select(Aoi).where(Aoi.code == code))
+            if row is None:
+                row = Aoi(code=code)
+                session.add(row)
+                inserted += 1
+            else:
+                updated += 1
+            row.name = props.get("name", code)
+            row.level = props.get("level", "city")
+            row.adcode = str(props.get("adcode", code))
+            row.geom_wkt = wkt
+            row.min_lon, row.min_lat, row.max_lon, row.max_lat = bbox
+            row.area_km2 = props.get("area_km2") or _ring_area_km2(ring)
+            row.source = props.get("source", "amap_district")
+            row.datum = "wgs84"
+            row.accuracy = props.get("accuracy", "approx")
+            levels[row.level] = levels.get(row.level, 0) + 1
     session.flush()
-    return {"inserted": inserted, "points": len(ring), "area_km2": round(area, 1)}
+    return {"inserted": inserted, "updated": updated, "levels": levels}
 
 
 def _ring_area_km2(ring: list[list[float]]) -> float:

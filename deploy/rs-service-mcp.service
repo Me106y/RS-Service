@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=%h/桌面/RS-Service
-Environment=RS_DB_PATH=%h/.local/share/rs-service/rs.db
+EnvironmentFile=-%h/桌面/RS-Service/.env
 ExecStart=%h/桌面/RS-Service/.venv/bin/rs-service serve-mcp --port 8765
 Restart=on-failure
 RestartSec=3

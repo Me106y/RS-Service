@@ -9,13 +9,18 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """RS-Service 配置；所有字段可用 RS_ 前缀环境变量覆盖。"""
 
-    model_config = SettingsConfigDict(env_prefix="RS_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="RS_",
+        env_file=str(Path(__file__).resolve().parents[2] / ".env"),
+        extra="ignore",
+    )
 
     data_dir: Path = Path.home() / ".local" / "share" / "rs-service"
     db_path: Path | None = None
     database_url: str | None = None
 
     celestrak_base_url: str = "https://celestrak.org/NORAD/elements/gp.php"
+    optical_sun_min_deg: float = 10.0
     celestrak_timeout_seconds: int = 60
     http_proxy: str | None = None
 
@@ -35,7 +40,10 @@ class Settings(BaseSettings):
     def sqlalchemy_url(self) -> str:
         if self.database_url:
             return self.database_url
-        return f"sqlite+pysqlite:///{self.resolved_db_path()}"
+        if self.db_path:
+            return f"sqlite+pysqlite:///{self.resolved_db_path()}"
+        # 生产默认 PostgreSQL；本机密码由 .env / RS_DATABASE_URL 提供。
+        return "postgresql+psycopg://rs_service@127.0.0.1:5432/rs_service"
 
     def retry_delays(self) -> list[int]:
         values = [item.strip() for item in self.sync_retry_delays.split(",") if item.strip()]

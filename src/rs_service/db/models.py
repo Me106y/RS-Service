@@ -269,3 +269,43 @@ class CoverageSnapshot(Base):
     art_s: Mapped[float | None] = mapped_column(Float)
     algo_version: Mapped[str] = mapped_column(String(16), nullable=False)
     computed_at: Mapped[str] = mapped_column(String(32), default=utcnow_iso, nullable=False)
+
+class SensorMode(Base):
+    """成像模式：把 sensor.raw_spec 里的自由文本拆成 (分辨率, 幅宽) 成对的结构。"""
+
+    __tablename__ = "sensor_mode"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    sat_id: Mapped[int] = mapped_column(ForeignKey("satellite.sat_id"), nullable=False)
+    mode_name: Mapped[str] = mapped_column(String(32), nullable=False)
+    resolution_m: Mapped[float] = mapped_column(Float, nullable=False)
+    swath_km: Mapped[float] = mapped_column(Float, nullable=False)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    confidence: Mapped[str] = mapped_column(String(16), default="unknown", nullable=False)
+    note: Mapped[str | None] = mapped_column(Text)
+    source_text: Mapped[str | None] = mapped_column(Text)
+    parser_version: Mapped[str] = mapped_column(String(16), nullable=False)
+    updated_at: Mapped[str] = mapped_column(String(32), default=utcnow_iso, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("sat_id", "mode_name", name="uq_sensor_mode_sat_name"),
+        Index("idx_sensor_mode_res", "resolution_m"),
+    )
+
+
+class SensorModeCorrection(Base):
+    """解析纠错流水：原文本 → 纠正后 → 依据，供报告与复现使用。"""
+
+    __tablename__ = "sensor_mode_correction"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    sat_id: Mapped[int] = mapped_column(ForeignKey("satellite.sat_id"), nullable=False)
+    mode_name: Mapped[str | None] = mapped_column(String(32))
+    field: Mapped[str] = mapped_column(String(32), nullable=False)
+    raw: Mapped[str | None] = mapped_column(Text)
+    corrected: Mapped[str | None] = mapped_column(String(32))
+    rule: Mapped[str] = mapped_column(String(32), nullable=False)
+    parser_version: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[str] = mapped_column(String(32), default=utcnow_iso, nullable=False)
+
+    __table_args__ = (Index("idx_sm_corr_sat", "sat_id"),)
