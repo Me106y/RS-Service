@@ -15,12 +15,14 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, status
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 
 from .coverage_engine.adapter import PlanError, PlanSpec, collect_candidates, run_plan
 from .db.models import Aoi
 from .db.session import session_scope
+from .report import report_root, write_report
 
 router = APIRouter(prefix="/api/v1", tags=["plans"])
 
@@ -267,6 +269,34 @@ def get_plan(job_id: str) -> dict[str, Any]:
             detail={"code": "plan_not_found", "job_id": job_id},
         )
     return {"ok": True, **job}
+
+
+@router.post("/plans/{job_id}/report")
+def create_report(job_id: str) -> dict[str, Any]:
+    job = JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "plan_not_found", "job_id": job_id},
+        )
+    if job["status"] != "completed" or not job.get("result"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "plan_not_completed", "job_id": job_id, "status": job["status"]},
+        )
+    info = write_report(job["result"], job_id)
+    return {"ok": True, **info, "report_url": f"/api/v1/plans/{job_id}/report"}
+
+
+@router.get("/plans/{job_id}/report")
+def get_report(job_id: str) -> FileResponse:
+    path = report_root() / job_id / "report.html"
+    if not path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "report_not_found", "job_id": job_id},
+        )
+    return FileResponse(path)
 
 
 __all__ = ["JOBS", "PlanCreate", "router"]

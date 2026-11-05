@@ -23,7 +23,7 @@ import shutil
 import tempfile
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -366,6 +366,115 @@ def _apply_cloud(
     return filtered
 
 
+def _aoi_outline(aoi: dict[str, Any]) -> list[list[float]]:
+    geometry = shape(aoi["features"][0]["geometry"])
+    if geometry.geom_type == "MultiPolygon":
+        geometry = max(geometry.geoms, key=lambda item: item.area)
+    return [[round(x, 6), round(y, 6)] for x, y in geometry.exterior.coords]
+
+
+def _playback(
+    store: Any,
+    selected_indices: Iterable[int],
+    start_utc: datetime,
+) -> dict[str, Any]:
+    """从机会窗口重建"逐格点首次覆盖"时间轴，供旧报告的地图画布回放。"""
+
+    selected = {int(item) for item in selected_indices}
+    cells = store.grid.cells
+    first: dict[int, tuple[datetime, int]] = {}
+    for (sat_index, grid_index), windows in store.windows.items():
+        if sat_index not in selected or not windows:
+            continue
+        moment = min(item.start_utc for item in windows)
+        current = first.get(grid_index)
+        if current is None or moment < current[0]:
+            first[grid_index] = (moment, sat_index)
+
+    names = {
+        int(store.satellites[index].norad_id): store.satellites[index].name
+        for index in selected
+    }
+    palette = ["#48c7d9", "#f0a52b", "#8b7ff0", "#5fbf8f", "#e0574a", "#c084fc", "#7dd3fc", "#d6b25e"]
+    palette_light = ["#0e7490", "#b45309", "#6d28d9", "#15803d", "#b91c1c", "#7e22ce", "#0369a1", "#a16207"]
+    colors: dict[str, str] = {}
+    colors_light: dict[str, str] = {}
+    for position, norad in enumerate(sorted(names)):
+        colors[str(norad)] = palette[position % len(palette)]
+        colors_light[str(norad)] = palette_light[position % len(palette_light)]
+
+    grouped: dict[tuple[int, datetime], list[list[float]]] = {}
+    for grid_index, (moment, sat_index) in first.items():
+        cell = cells[grid_index]
+        bucket = moment.replace(second=0, microsecond=0)
+        grouped.setdefault((sat_index, bucket), []).append(
+            [round(cell.representative_lon, 4), round(cell.representative_lat, 4)]
+        )
+
+    events = []
+    for (sat_index, moment) in sorted(grouped, key=lambda item: item[1]):
+        norad = int(store.satellites[sat_index].norad_id)
+        events.append(
+            {
+                "sat_id": norad,
+                "label": (moment + timedelta(hours=8)).strftime("%m-%d %H:%M"),
+                "points": grouped[(sat_index, moment)],
+            }
+        )
+    uncovered = [
+        [round(cell.representative_lon, 4), round(cell.representative_lat, 4)]
+        for index, cell in enumerate(cells)
+        if index not in first
+    ]
+    return {
+        "events": events,
+        "uncovered": uncovered,
+        "total": len(cells),
+        "colors": colors,
+        "colors_light": colors_light,
+        "start_label": (start_utc + timedelta(hours=8)).strftime("%m-%d %H:%M"),
+    }
+
+
+def _attach_report_data(
+    result: dict[str, Any],
+    candidates: list[Candidate],
+    aoi: dict[str, Any],
+    store: Any,
+) -> None:
+    selection = (result.get("selection") or {}).get("recommended_result") or {}
+    selected_ids = [int(item) for item in selection.get("selected_sat_ids") or []]
+    profiles = {item.norad_id: item for item in candidates}
+    table = {int(item["norad_id"]): item for item in result.get("satellite_table") or []}
+    sats = []
+    for position, norad in enumerate(selected_ids):
+        row = table.get(norad, {})
+        profile = profiles.get(norad)
+        sats.append(
+            {
+                "sat_id": norad,
+                "name": row.get("satellite") or (profile.name if profile else str(norad)),
+                "sensor_label": profile.sensor_class if profile else "—",
+                "resolution_m": profile.resolution_m if profile else None,
+                "swath_km": profile.swath_km if profile else None,
+                "passes": row.get("city_pass_count"),
+                "cumulative_minutes": row.get("cumulative_city_intersection_minutes"),
+                "first_window": row.get("first_window_utc"),
+                "rank": position + 1,
+            }
+        )
+    start = datetime.fromisoformat(
+        result["input_summary"]["start_utc"].replace("Z", "+00:00")
+    )
+    result["report_data"] = {
+        "aoi_outline": _aoi_outline(aoi),
+        "playback": _playback(store, selection.get("selected_sat_indices") or [], start),
+        "sats": sats,
+        "selected_ids": selected_ids,
+        "selected_count": len(selected_ids),
+    }
+
+
 def _annotate_result(
     result: dict[str, Any],
     candidates: list[Candidate],
@@ -431,15 +540,21 @@ def run_plan(spec: PlanSpec) -> dict[str, Any]:
                 request = normalize_request(payload)
             except SkillInputError as exc:
                 raise PlanError("bad_params", str(exc)) from exc
-            window_filter = None
-            if spec.cloud_filter:
-                window_filter = lambda store: _apply_cloud(  # noqa: E731
-                    store, spec, lat, lon, cloud_stats
-                )
-            result = execute_request(request, root=root, window_filter=window_filter)
+            captured: dict[str, Any] = {}
+
+            def _capture(store: Any) -> Any:
+                if spec.cloud_filter:
+                    store = _apply_cloud(store, spec, lat, lon, cloud_stats)
+                captured["store"] = store
+                return store
+
+            result = execute_request(request, root=root, window_filter=_capture)
         finally:
             shutil.rmtree(root, ignore_errors=True)
-    return _annotate_result(result, candidates, blocked, cloud_stats)
+    _annotate_result(result, candidates, blocked, cloud_stats)
+    if captured.get("store") is not None:
+        _attach_report_data(result, candidates, aoi, captured["store"])
+    return result
 
 
 __all__ = [
