@@ -71,6 +71,13 @@ def _notes(result: dict[str, Any]) -> list[str]:
     blocked = result.get("blocked_satellites") or []
     if blocked:
         notes.append(f"未参与选星 {len(blocked)} 颗，原因见任务结果。")
+    targets = result.get("targets") or {}
+    if targets.get("temporal_coverage_pct") is not None and targets.get("area_pct") is not None:
+        notes.append(
+            "达标判定：单格时间覆盖率 ≥ "
+            f"{targets['temporal_coverage_pct']:g}%，达到该阈值的面积占比目标 "
+            f"{targets['area_pct']:g}%。"
+        )
     tle = result.get("tle") or {}
     if tle.get("max_age_hours") is not None:
         notes.append(
@@ -123,10 +130,11 @@ def render_report(result: dict[str, Any]) -> str:
         else ""
     )
     targets = result.get("targets") or {}
-    target_pct = targets.get("temporal_coverage_pct")
+    temporal_target = targets.get("temporal_coverage_pct")
+    area_target = targets.get("area_pct")
     target_label = (
-        f"达标面积（目标 {target_pct:g}%）"
-        if target_pct is not None
+        f"达标面积（目标 {area_target:g}%）"
+        if area_target is not None
         else "达标面积"
     )
     label = OPERATION_LABELS.get(result.get("operation", ""), result.get("operation", "成图规划"))
@@ -153,7 +161,8 @@ def render_report(result: dict[str, Any]) -> str:
         window_hours=hours,
         window_note=window_note,
         target_label=target_label,
-        target_pct=target_pct,
+        temporal_target=temporal_target,
+        area_target=area_target,
         feasible=bool(result.get("feasible")),
         optimality=result.get("optimality") or "—",
         sat_count=count,
