@@ -17,13 +17,15 @@ import numpy as np
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from ..db.models import Aoi, Satellite, Sensor, SensorMode, TleCurrent, TleRecord
+from ..db.models import Aoi, DataSource, Satellite, Sensor, SensorMode, TleCurrent, TleRecord
 from ..geo import datum
+from ..settings import settings
 from . import cloud
 from . import coverage as cv
 from .propagate import satellite_from_omm
+from .solar import sun_altitude_deg
 
-ALGO_VERSION = "plan-0.1"
+ALGO_VERSION = "plan-0.2"
 MODES = (
     "min_sats_for_coverage",
     "min_sats_for_revisit",
@@ -54,6 +56,9 @@ class Candidate:
     omm: dict
     mask: np.ndarray | None = None
     hits: list | None = None
+    raw_hits: int = 0
+    sun_kept: int = 0
+    cloud_kept: int = 0
 
 
 @dataclass
@@ -222,13 +227,37 @@ def _plan_grid(rings, area_km2, candidates) -> cv.Grid:
     return grid
 
 
+def missing_params(
+    mode: str,
+    *,
+    aoi: str | list[str] | None,
+    max_resolution_m: float | None,
+    target_coverage_pct: float | None,
+    n_sats: int | None,
+    target_max_gap_hours: float | None,
+) -> list[str]:
+    """按模式列出缺的入参。覆盖率只有"最少星达覆盖率"模式才是目标，其余模式是输出。"""
+    missing = []
+    if not aoi:
+        missing.append("aoi")
+    if max_resolution_m is None:
+        missing.append("max_resolution_m")
+    if mode == "min_sats_for_coverage" and target_coverage_pct is None:
+        missing.append("target_coverage_pct")
+    if mode in ("max_coverage_for_n", "min_wait_for_n") and n_sats is None:
+        missing.append("n_sats")
+    if mode == "min_sats_for_revisit" and target_max_gap_hours is None:
+        missing.append("target_max_gap_hours")
+    return missing
+
+
 def solve(
     session: Session,
     *,
     mode: str,
     aoi: str | list[str],
     max_resolution_m: float,
-    target_coverage_pct: float,
+    target_coverage_pct: float | None = None,
     n_sats: int | None = None,
     target_max_gap_hours: float | None = None,
     sensor_types: list[str] | None = None,
@@ -238,24 +267,36 @@ def solve(
     persist: bool = True,
     cloud_filter: bool = True,
     cloud_threshold: float = 70.0,
+    optical_sun_min_deg: float | None = None,
     step_s: int = 30,
 ) -> dict:
     if mode not in MODES:
         raise PlanError("unsupported_mode", allowed=list(MODES))
-    missing = []
-    if not aoi:
-        missing.append("aoi")
-    if not max_resolution_m:
-        missing.append("max_resolution_m")
-    if target_coverage_pct is None:
-        missing.append("target_coverage_pct")
-    if mode in ("max_coverage_for_n", "min_wait_for_n") and not n_sats:
-        missing.append("n_sats")
-    if mode == "min_sats_for_revisit" and not target_max_gap_hours:
-        missing.append("target_max_gap_hours")
+    if mode in ("max_coverage_for_n", "min_wait_for_n"):
+        # 这两个模式覆盖率是输出；即使调用方顺手传了目标值也不要拿它判"达标"。
+        target_coverage_pct = None
+    missing = missing_params(
+        mode,
+        aoi=aoi,
+        max_resolution_m=max_resolution_m,
+        target_coverage_pct=target_coverage_pct,
+        n_sats=n_sats,
+        target_max_gap_hours=target_max_gap_hours,
+    )
     if missing:
         raise PlanError("missing_params", missing=missing)
+    if not (0 < max_resolution_m):
+        raise PlanError("bad_params", field="max_resolution_m", message="分辨率必须大于 0 米")
+    if not (1 <= hours <= MAX_HOURS):
+        raise PlanError("bad_params", field="hours", allowed=[1, MAX_HOURS], message="时间窗超出范围")
+    if target_coverage_pct is not None and not (1 <= target_coverage_pct <= 100):
+        raise PlanError("bad_params", field="target_coverage_pct", allowed=[1, 100])
+    if n_sats is not None and not (1 <= n_sats <= 20):
+        raise PlanError("bad_params", field="n_sats", allowed=[1, 20])
+    if target_max_gap_hours is not None and target_max_gap_hours <= 0:
+        raise PlanError("bad_params", field="target_max_gap_hours", message="重访上限必须大于 0 小时")
 
+    sun_min = settings.optical_sun_min_deg if optical_sun_min_deg is None else optical_sun_min_deg
     stypes = sensor_types or ["optical", "sar", "hyperspectral"]
     resolved = resolve_aoi(session, aoi)
     candidates = _candidates(session, max_resolution_m, stypes)
@@ -267,9 +308,11 @@ def solve(
     t0 = start or datetime.now(UTC)
     if t0.tzinfo is None:
         t0 = t0.replace(tzinfo=UTC)
-    ladder = [h for h in EXTEND_LADDER if h >= hours] or [hours]
-    if not extend:
-        ladder = [hours]
+    # 只有"最少星达覆盖率"值得靠加长窗口去够目标；给定 N 颗、重访、最小等待都按
+    # 用户指定的窗口出结果，否则 72h 会被悄悄扩成 14d，答案和问题就不是一回事了。
+    ladder = [hours]
+    if extend and mode == "min_sats_for_coverage":
+        ladder = [h for h in EXTEND_LADDER if h >= hours] or [hours]
 
     cx = float(np.mean(grid.lon))
     cy = float(np.mean(grid.lat))
@@ -286,10 +329,17 @@ def solve(
         for c in candidates:
             sat = satellite_from_omm(c.omm)
             c.mask, c.hits = cv.satellite_coverage(sat, grid, t0, end, c.swath_km, step_s=step_s)
+            c.raw_hits = sum(len(ts) for ts in (c.hits or []))
+            _apply_sun(c, grid, t0, sun_min)
+            c.sun_kept = sum(len(ts) for ts in (c.hits or []))
             _apply_cloud(c, cloud_series, t0, cloud_threshold)
+            c.cloud_kept = sum(len(ts) for ts in (c.hits or []))
         chosen, coverage_pct = _greedy(candidates, grid, mode, target_coverage_pct, n_sats, target_max_gap_hours, h * 3600)
         attempts.append({"hours": h, "coverage_pct": round(coverage_pct, 2)})
-        ok_cov = coverage_pct >= target_coverage_pct - 1e-9
+        ok_cov = (
+            target_coverage_pct is None
+            or coverage_pct >= target_coverage_pct - 1e-9
+        )
         ok_gap = True
         if mode == "min_sats_for_revisit" and chosen:
             gaps = _gaps(chosen, grid, h * 3600)
@@ -312,7 +362,9 @@ def solve(
             suggestions=["增加卫星数量上限（改用 max_coverage_for_n 反查）",
                          "增加传感器类型", "放宽目标最大间隔"],
         )
-    if coverage_pct < target_coverage_pct - 1e-9 and mode in ("min_sats_for_coverage", "min_sats_for_revisit"):
+    if (target_coverage_pct is not None
+            and coverage_pct < target_coverage_pct - 1e-9
+            and mode in ("min_sats_for_coverage", "min_sats_for_revisit")):
         raise PlanError(
             "target_unreachable",
             best_coverage_pct=round(coverage_pct, 2),
@@ -329,11 +381,25 @@ def solve(
     sats_out = []
     for i, c in enumerate(chosen):
         pts = np.flatnonzero(owner == i)
+        others = np.zeros(len(grid), dtype=bool)
+        for j, other in enumerate(chosen):
+            if j != i and other.mask is not None:
+                others |= other.mask
+        unique_pct = float((c.mask & ~others).sum()) / total * 100 if c.mask is not None else 0.0
         sats_out.append({
             "sat_id": c.sat_id, "name": c.name, "sensor_type": c.sensor_type,
             "mode_used": c.mode, "resolution_m": c.resolution_m, "swath_km": c.swath_km,
             "coverage_pct": round(pts.size / total * 100, 2),
             "solo_coverage_pct": round(float(c.mask.sum()) / total * 100, 2) if c.mask is not None else 0.0,
+            "unique_pct": round(unique_pct, 2),
+            "passes": _count_visits(c.hits),
+            "sun_dropped_pct": (
+                round((1 - c.sun_kept / c.raw_hits) * 100, 1) if c.raw_hits else 0.0
+            ),
+            "cloud_dropped_pct": (
+                round((1 - c.cloud_kept / c.sun_kept) * 100, 1) if c.sun_kept else 0.0
+            ),
+            **_purchase_info(session, c.sat_id),
             "coverage_points": _subsample(grid, pts, stride),
             "footprint": _hull([[float(grid.lon[i]), float(grid.lat[i])] for i in pts]),
         })
@@ -359,14 +425,23 @@ def solve(
         },
         "plan": {
             "sat_count": len(chosen),
+            "requested_n": n_sats,
             "coverage_pct": round(coverage_pct, 2),
-            "feasible": coverage_pct >= target_coverage_pct - 1e-9,
+            "target_max_gap_hours": target_max_gap_hours,
+            "feasible": (
+                None if target_coverage_pct is None
+                else coverage_pct >= target_coverage_pct - 1e-9
+            ),
             "sats": sats_out,
             "gap": gaps,
-            "target_pct": float(target_coverage_pct),
+            "target_pct": None if target_coverage_pct is None else float(target_coverage_pct),
             "optimal": False,
-            "lower_bound_n": _lower_bound(candidates, grid, target_coverage_pct),
+            "lower_bound_n": (
+                None if target_coverage_pct is None
+                else _lower_bound(candidates, grid, target_coverage_pct)
+            ),
             "under_covered_points": gaps.get("under_covered_points", 0),
+            "uncovered_point_count": int((owner < 0).sum()),
         },
         "algo_version": ALGO_VERSION,
         "parser_version": _parser_version(),
@@ -375,7 +450,9 @@ def solve(
         "cloud": {"used": bool(cloud_series), "threshold_pct": cloud_threshold},
         "excluded": excluded,
         "notes": _plan_notes(mode, n_sats, len(chosen), coverage_pct, target_coverage_pct)
+        + _window_notes(mode)
         + _excluded_notes(session, stypes)
+        + _sun_notes(sun_min, any(c.sensor_type in ("optical", "hyperspectral") for c in chosen))
         + _cloud_notes(cloud_filter, bool(cloud_series), cloud_threshold),
         "persisted": result_written,
     }
@@ -437,7 +514,7 @@ def _pick_for_wait(pool, grid, n_sats, window_s, shortlist=12):
 
 def _greedy(candidates, grid, mode, target_pct, n_sats, target_gap_h, window_s):
     total = max(1, len(grid))
-    target_pts = target_pct / 100.0 * total
+    target_pts = (target_pct or 0.0) / 100.0 * total
     pool = [c for c in candidates if c.mask is not None and c.mask.any()]
     covered = np.zeros(len(grid), dtype=bool)
     chosen: list[Candidate] = []
@@ -473,12 +550,15 @@ def _greedy(candidates, grid, mode, target_pct, n_sats, target_gap_h, window_s):
         covered |= best.mask
         if mode == "min_sats_for_coverage" and covered.sum() >= target_pts:
             break
-        if mode == "min_sats_for_revisit" and covered.sum() >= target_pts:
-            g = _gaps(chosen, grid, window_s)
-            if g.get("p95_hours") is not None and g["p95_hours"] <= target_gap_h + 1e-9:
-                break
+        if mode == "min_sats_for_revisit":
+            # 重访模式没有覆盖率目标时，只看 P95 是否已经达标，不能因为
+            # target_pts=0 就在 1 颗星时提前收工。
+            if target_pct is None or covered.sum() >= target_pts:
+                g = _gaps(chosen, grid, window_s)
+                if g.get("p95_hours") is not None and g["p95_hours"] <= target_gap_h + 1e-9:
+                    break
 
-    if mode == "min_sats_for_coverage":
+    if mode == "min_sats_for_coverage" and target_pct is not None:
         for c in list(chosen):
             rest = [x for x in chosen if x is not c]
             if not rest:
@@ -522,17 +602,71 @@ def _gaps(chosen, grid, window_s):
 
 
 
+def _sun_notes(min_deg: float, has_passive: bool) -> list[str]:
+    if not has_passive:
+        return []
+    return [
+        f"光学/高光谱访问已按太阳高度 > {min_deg:g}° 过滤：夜间过境不计入覆盖；SAR 不受太阳高度限制。"
+    ]
+
+
 def _cloud_notes(enabled: bool, ok: bool, threshold: float) -> list[str]:
     if not enabled:
         return ["云量过滤已关闭：本次覆盖率是几何覆盖，未剔除厚云遮挡。"]
     if not ok:
         return ["云量数据获取失败：本次覆盖率按几何覆盖计算，未剔除厚云遮挡。"]
-    return [f"光学卫星按 Open-Meteo 逐小时云量过滤：云量 > {threshold:.0f}% 的访问不计入覆盖；SAR 不受影响。"]
+    return [f"光学/高光谱按 Open-Meteo 逐小时云量过滤：云量 > {threshold:.0f}% 的访问不计入覆盖；SAR 不受影响。"]
+
+
+def _apply_sun(c: Candidate, grid, t0: datetime, min_deg: float) -> None:
+    """光学/高光谱按访问时刻与格点的太阳高度剔除夜间访问；SAR 原样保留。"""
+    if c.sensor_type not in ("optical", "hyperspectral") or c.hits is None:
+        return
+    kept: list[list[float]] = []
+    for gi, ts in enumerate(c.hits):
+        if not ts:
+            kept.append([])
+            continue
+        lat = float(grid.lat[gi])
+        lon = float(grid.lon[gi])
+        kept.append([
+            t for t in ts
+            if sun_altitude_deg(t0 + timedelta(seconds=float(t)), lat, lon) > min_deg
+        ])
+    c.hits = kept
+    c.mask = np.array([len(v) > 0 for v in kept], dtype=bool)
+
+
+def _count_visits(hits) -> int:
+    """把同一颗星的连续命中并成一次过境（间隔 >180 s 才算下一次）。"""
+    times = sorted({float(t) for ts in (hits or []) for t in ts})
+    visits = 0
+    last = None
+    for t in times:
+        if last is None or t - last > 180.0:
+            visits += 1
+        last = t
+    return visits
+
+
+def _purchase_info(session: Session, sat_id: int) -> dict:
+    """该星当前 TLE 的数据来源（CelesTrak GP）与可点开的查询地址。"""
+    current = session.get(TleCurrent, sat_id)
+    record = session.get(TleRecord, current.tle_id) if current is not None else None
+    source = session.get(DataSource, record.source_id) if record is not None else None
+    base = (source.base_url if source is not None and source.base_url else settings.celestrak_base_url)
+    return {
+        "source_code": source.code if source is not None else "celestrak-gp",
+        "source_name": source.name if source is not None else "CelesTrak GP",
+        "source_url": f"{base.rstrip('/')}?CATNR={sat_id}&FORMAT=json",
+        "source_terms_url": source.terms_url if source is not None else None,
+        "tle_epoch_utc": current.epoch_utc if current is not None else None,
+    }
 
 
 def _apply_cloud(c: Candidate, series, t0: datetime, threshold: float) -> None:
-    """光学星按访问时刻的云量剔除；SAR 与无云量数据时原样保留。"""
-    if not series or c.sensor_type != "optical" or c.hits is None:
+    """光学/高光谱按访问时刻的云量剔除；SAR 与无云量数据时原样保留。"""
+    if not series or c.sensor_type not in ("optical", "hyperspectral") or c.hits is None:
         return
     base = series[0][0]
     values = [v for _, v in series]
@@ -620,7 +754,7 @@ def _persist(session, enabled, items, chosen, coverage_pct, gaps, t0, hours, gri
         sat_set_hash=sat_hash,
         grid_spacing_deg=grid.spacing_deg,
         k_min=1,
-        temporal_coverage_pct=float(target),
+        temporal_coverage_pct=None if target is None else float(target),
         area_coverage_pct=round(coverage_pct, 2),
         mrt_s=(gaps or {}).get("mrt_hours") and round(gaps["mrt_hours"] * 3600, 1),
         art_s=(gaps or {}).get("p95_hours") and round(gaps["p95_hours"] * 3600, 1),
@@ -645,6 +779,14 @@ def _excluded_notes(session: Session, sensor_types: list[str]) -> list[str]:
             "重访指标仅对 LEO 成立。"
         )
     return notes
+
+
+def _window_notes(mode: str) -> list[str]:
+    if mode in ("max_coverage_for_n", "min_wait_for_n", "min_sats_for_revisit"):
+        return [
+            "本模式按指定的时间窗计算，不自动扩窗；覆盖率/重访指标只对此时长成立。"
+        ]
+    return []
 
 
 def _plan_notes(mode, n_sats, chosen_n, cov, target) -> list[str]:

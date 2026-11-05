@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     database_url: str | None = None
 
     celestrak_base_url: str = "https://celestrak.org/NORAD/elements/gp.php"
+    optical_sun_min_deg: float = 10.0
     celestrak_timeout_seconds: int = 60
     http_proxy: str | None = None
 
