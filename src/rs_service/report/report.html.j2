@@ -1,0 +1,500 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ title }}</title>
+<script>
+(function(){
+  try {
+    var q = new URLSearchParams(location.search).get('theme');
+    var t = q || localStorage.getItem('siria-plan-theme');
+    if (t !== 'light' && t !== 'dark') t = 'dark';
+    document.documentElement.dataset.theme = t;
+  } catch (e) { document.documentElement.dataset.theme = 'dark'; }
+})();
+</script>
+<style>
+:root{
+  --ink:#070b10; --panel:#0d141c; --panel-2:#111a24; --line:#1e2c3a; --line-soft:#16222e;
+  --txt:#dfe8f1; --muted:#7d93a8; --dim:#8a9caf;
+  --rule:#54697d;
+  --amber:#f0a52b; --cyan:#48c7d9; --red:#e0574a; --green:#5fbf8f;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+  --sans:"Noto Sans CJK SC","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  --map-fill:#0d1a24; --map-stroke:#2f4a60; --map-empty:#2b4557;
+  --top-bg:rgba(10,16,23,.9); --top-shadow:0 6px 20px rgba(0,0,0,.35);
+}
+:root[data-theme="light"]{
+  --ink:#f4f7fa; --panel:#ffffff; --panel-2:#eef3f7; --line:#d5dfe8; --line-soft:#e4ebf2;
+  --txt:#101c26; --muted:#536575; --dim:#647687; --rule:#9db0c0;
+  --amber:#a9540a; --cyan:#0b6e83; --red:#b3261e; --green:#156b45;
+  --map-fill:#edf3f7; --map-stroke:#8da4b5; --map-empty:#c2d0db;
+  --top-bg:rgba(255,255,255,.92); --top-shadow:0 6px 20px rgba(16,35,50,.12);
+}
+:root[data-theme="light"] ::selection{background:rgba(11,110,131,.18);color:#0b1a24}
+:root[data-theme="light"] .side{background:linear-gradient(180deg,#fff,#f1f5f9 55%)}
+:root[data-theme="light"] tr:hover td{background:#f4f8fb}
+:root[data-theme="light"] .mapwrap{background:radial-gradient(120% 120% at 70% 10%,#f8fbfd,#e9f0f5 70%)}
+:root[data-theme="light"] .transport{background:#f7fafc}
+:root[data-theme="light"] .play{background:#fff}
+:root[data-theme="light"] .play:hover{background:#eef6f9}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+html,body{margin:0;background:var(--ink);color:var(--txt);font-family:var(--sans);line-height:1.65}
+body{display:grid;grid-template-columns:288px minmax(0,1fr);min-height:100vh}
+::selection{background:rgba(72,199,217,.28);color:#fff}
+:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
+*{scrollbar-color:var(--line) transparent;scrollbar-width:thin}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:var(--line);border-radius:8px}
+::-webkit-scrollbar-track{background:transparent}
+
+/* ---------- sidebar ---------- */
+.side{border-right:1px solid var(--line);background:linear-gradient(180deg,#0a1017,#080d13 55%);padding:26px 22px 30px;position:sticky;top:0;height:100vh;display:flex;flex-direction:column;gap:26px;overflow:auto}
+.brand{display:flex;align-items:center;gap:11px;text-decoration:none;color:inherit}
+.brand svg{flex:none}
+.brand b{font-size:16px;letter-spacing:.01em;font-weight:700}
+.brand span{display:block;font-size:12px;color:var(--dim);letter-spacing:.16em;margin-top:1px}
+nav{display:grid;gap:2px;border-top:1px solid var(--line-soft);padding-top:20px}
+nav a{display:flex;gap:10px;align-items:baseline;padding:8px 10px;border-radius:6px;color:var(--muted);text-decoration:none;font-size:13.5px}
+nav a:hover{background:var(--panel-2);color:var(--txt)}
+nav a[aria-current="true"]{background:var(--panel-2);color:var(--txt);box-shadow:inset 2px 0 0 var(--amber)}
+nav a[aria-current="true"] .idx{color:var(--amber)}
+nav a .idx{font-family:var(--mono);font-size:12px;color:var(--dim);min-width:16px}
+.side .foot{margin-top:auto;font-size:12px;color:var(--dim);line-height:1.7;border-top:1px solid var(--line-soft);padding-top:16px}
+
+/* ---------- main ---------- */
+main{min-width:0;padding:44px 46px 96px}
+h1{font-size:clamp(26px,2.4vw,34px);line-height:1.28;margin:0 0 10px;font-weight:700;letter-spacing:-.015em;max-width:none}
+h1 em{font-style:normal;color:var(--amber)}
+.nowrap{white-space:nowrap}
+
+
+/* instrument strip */
+.strip{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;margin:30px 0 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line-soft)}
+.strip>div{padding:14px 16px 15px;border-right:1px solid var(--line-soft)}
+.strip>div:last-child{border-right:0}
+.context{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border-bottom:1px solid var(--line)}
+.context>div{padding:12px 16px 13px;border-right:1px solid var(--line-soft);min-width:0}
+.context>div:last-child{border-right:0}
+.context .k{display:block;font-size:11px;color:var(--dim);letter-spacing:.08em;margin-bottom:2px}
+.context .v{display:block;font-size:14px;color:var(--txt);line-height:1.45}
+.context .v.mono{font-family:var(--mono);font-size:12.5px;letter-spacing:-.01em;white-space:nowrap}
+.context .v small{display:block;font-size:11px;color:var(--muted);margin-top:1px;font-weight:400}
+.strip .lab{font-size:12px;color:var(--dim);letter-spacing:.06em}
+.strip .val{font-family:var(--mono);font-size:20px;letter-spacing:-.02em;margin-top:2px}
+.strip .val small{font-size:12px;color:var(--muted);margin-left:2px}
+.strip .val.amber{color:var(--amber)}
+
+section{margin-top:52px;scroll-margin-top:24px}
+h2{font-size:17px;margin:0 0 4px;font-weight:700;letter-spacing:-.01em}
+.lede{color:var(--muted);font-size:13px;margin:0 0 18px;max-width:72ch}
+
+.glossary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 30px;margin:12px 0 20px;padding:12px 14px;border-top:1px solid var(--line-soft);border-bottom:1px solid var(--line-soft)}
+.glossary>div{display:grid;grid-template-columns:48px minmax(0,1fr);gap:9px;align-items:baseline}
+.glossary dt{font-size:11px;color:var(--dim);letter-spacing:.06em;white-space:nowrap}
+.glossary dd{margin:0;font-size:12px;line-height:1.6;color:var(--muted)}
+.glossary b{color:var(--txt);font-weight:600}
+@media (max-width:820px){.glossary{grid-template-columns:1fr;gap:7px}}
+
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+th{text-align:left;padding:9px 12px;font-size:12px;letter-spacing:.06em;color:var(--dim);border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:11px 12px;border-bottom:1px solid var(--line-soft);vertical-align:middle}
+tr:hover td{background:#0b121a}
+td.num,th.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:right;letter-spacing:-.01em}
+.swatch{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:9px;vertical-align:1px;background:var(--c,#2b4557)}
+:root[data-theme="light"] .swatch{background:var(--c-light,var(--c,#c2d0db))}
+.tag{font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:1px 6px}
+
+/* map */
+.mapwrap{max-width:780px;border:1px solid var(--line);border-radius:10px;background:radial-gradient(120% 120% at 70% 10%,#0e1922,#080d12 70%);overflow:hidden}
+.mapwrap canvas{display:block;width:100%;height:auto;aspect-ratio:16/9}
+.transport{display:grid;grid-template-columns:auto 1fr auto;gap:16px;align-items:center;padding:12px 16px;border-top:1px solid var(--line);background:#0a1118}
+.play{width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:#0f1922;color:var(--cyan);display:grid;place-items:center;cursor:pointer;padding:0}
+.play:hover{border-color:var(--cyan);background:#13212c}
+.play svg{width:13px;height:13px;fill:currentColor}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:22px;background:transparent;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:3px;background:var(--line);border-radius:2px}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:50%;background:var(--amber);margin-top:-4.5px;box-shadow:0 0 0 4px rgba(240,165,43,.16)}
+input[type=range]::-moz-range-track{height:3px;background:var(--line);border-radius:2px}
+input[type=range]::-moz-range-thumb{width:12px;height:12px;border:0;border-radius:50%;background:var(--amber);box-shadow:0 0 0 4px rgba(240,165,43,.16)}
+.clock{font-family:var(--mono);font-size:13px;color:var(--txt);font-variant-numeric:tabular-nums;min-width:150px;text-align:right}
+.clock .pct{color:var(--amber)}
+.legend{display:flex;flex-wrap:wrap;gap:18px;padding:12px 16px 14px;font-size:12px;color:var(--muted);border-top:1px solid var(--line-soft)}
+.legend .swatch{vertical-align:0}
+
+ul.notes{margin:10px 0 0;padding-left:18px;color:var(--muted);font-size:13px;max-width:76ch}
+ul.notes li{margin:5px 0}
+pre.err{background:#1a0f0f;border:1px solid #43201d;color:#f0b4ad;padding:14px;border-radius:8px;font-family:var(--mono);font-size:12px;overflow:auto}
+
+/* purchase plan */
+.purchase-wrap{margin-top:18px;overflow-x:auto}
+.purchase{min-width:900px}
+.purchase th:nth-child(1){width:19%}
+.purchase th:nth-child(2){width:6%}
+.purchase th:nth-child(3){width:7%}
+.purchase th:nth-child(4){width:7%}
+.purchase th:nth-child(5){width:10%}
+.purchase th:nth-child(6){width:17%}
+.purchase th:nth-child(7){width:34%}
+.purchase td{vertical-align:top;padding-top:13px;padding-bottom:13px}
+.sat-cell{display:flex;flex-wrap:wrap;align-items:baseline;gap:5px 8px}
+.sat-cell .rank{font-family:var(--mono);font-size:11px;color:var(--dim);letter-spacing:.06em}
+.sat-cell .sat-name{font-weight:600;color:var(--txt)}
+.sat-cell .sat-id{flex-basis:100%;margin-left:24px;font-family:var(--mono);font-size:11px;color:var(--dim)}
+.purchase .swatch{vertical-align:0}
+.purchase td.num,.purchase th.num{white-space:nowrap}
+.purchase .pct{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.purchase .bar{display:block;width:64px;height:3px;border-radius:2px;background:var(--line-soft);margin:6px 0 0 auto;overflow:hidden}
+.purchase .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--cyan),var(--amber))}
+.src{color:var(--cyan);text-decoration:none;font-weight:600;font-size:13px;border-bottom:1px solid transparent;white-space:nowrap}
+.src:hover{border-bottom-color:currentColor}
+.src .arrow{font-weight:400;font-size:11px}
+.src-meta{display:block;font-family:var(--mono);font-size:11px;color:var(--dim);margin-top:3px;white-space:nowrap}
+.reason{color:var(--muted);font-size:12.5px;line-height:1.65;max-width:36ch}
+.buy{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.04em;padding:1px 6px;border-radius:3px;margin-right:7px;vertical-align:1px}
+.buy.must{color:var(--amber);background:rgba(240,165,43,.12);border:1px solid rgba(240,165,43,.3)}
+.buy.opt{color:var(--muted);background:transparent;border:1px solid var(--line)}
+:root[data-theme="light"] .buy.must{background:rgba(169,84,10,.08);border-color:rgba(169,84,10,.25)}
+.fine{margin:14px 0 0;color:var(--dim);font-size:12px;line-height:1.7;max-width:78ch}
+.fine a{color:var(--muted);text-underline-offset:3px}
+@media (max-width:960px){
+  .purchase{min-width:0;display:block}
+  .purchase thead{display:none}
+  .purchase tbody{display:grid;gap:12px}
+  .purchase tr{display:grid;gap:6px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+  .purchase tr:hover td{background:transparent}
+  .purchase td{display:grid;grid-template-columns:84px minmax(0,1fr);gap:10px;align-items:baseline;border:0;padding:0;text-align:left}
+  .purchase td::before{content:attr(data-label);font-size:11px;letter-spacing:.06em;color:var(--dim);font-family:var(--sans)}
+  .purchase .cellv{display:block;min-width:0}
+  .purchase .bar{width:100%;margin:5px 0 0}
+  .purchase .sat-cell .sat-id{margin-left:0}
+  .purchase .reason{max-width:none}
+  .purchase-wrap{overflow:visible}
+}
+@media (max-width:560px){
+  .top-actions{top:10px;right:10px;gap:6px}
+  .top-actions button{padding:8px 11px}
+  .theme-toggle .label{display:none}
+}
+
+footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:var(--dim);font-size:12px;line-height:1.8;max-width:82ch}
+
+@media (max-width:1080px){
+  body{grid-template-columns:1fr}
+  .side{position:static;height:auto;flex-direction:row;flex-wrap:wrap;gap:18px;align-items:flex-start}
+  .side .foot{width:100%;margin-top:6px}
+  main{padding:30px 20px 70px}
+  .strip{grid-template-columns:repeat(3,1fr)}
+  .context{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .context>div{border-bottom:1px solid var(--line-soft)}
+  .context>div:nth-child(2n){border-right:0}
+  .context>div:nth-last-child(-n+2){border-bottom:0}
+}
+@media (max-width:640px){
+  .context{grid-template-columns:1fr}
+  .context>div{border-right:0;border-bottom:1px solid var(--line-soft)}
+  .context>div:last-child{border-bottom:0}
+}
+@media (prefers-reduced-motion:reduce){
+  *{animation:none!important;transition:none!important}
+}
+/* ---------- top actions ---------- */
+.top-actions{position:fixed;top:16px;right:18px;z-index:9999;display:flex;gap:8px;align-items:center}
+.top-actions button{padding:8px 15px;border:1px solid var(--line);border-radius:999px;background:var(--top-bg);color:var(--txt);font:600 13px var(--sans);cursor:pointer;backdrop-filter:blur(8px);box-shadow:var(--top-shadow)}
+.top-actions button:hover{border-color:var(--cyan);color:var(--cyan)}
+.theme-toggle{display:inline-flex;align-items:center;gap:7px}
+.theme-toggle svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.export-pdf{border-color:rgba(72,199,217,.65)!important;color:var(--cyan)!important}
+.export-pdf:hover{background:rgba(72,199,217,.14)!important}
+:root[data-theme="light"] .export-pdf{border-color:rgba(11,110,131,.35)!important}
+:root[data-theme="light"] .export-pdf:hover{background:rgba(11,110,131,.08)!important}
+@media print{
+  .top-actions{display:none}
+  :root{--ink:#fff; --panel:#fff; --panel-2:#fff; --line:#c9d3dc; --line-soft:#e3e9ef;
+    --txt:#0f1a24; --muted:#4b5b6a; --dim:#5b6b7a; --rule:#8fa2b2;
+    --amber:#a9540a; --cyan:#0b6e83; --red:#b3261e; --green:#156b45;
+    --map-fill:#edf3f7; --map-stroke:#8da4b5; --map-empty:#c2d0db}
+  body{display:block;background:#fff;color:#111}
+  .side{display:none}
+  main{padding:0;max-width:none}
+  h1{max-width:none;font-size:24px}
+  section{break-inside:avoid}
+  .purchase-wrap{overflow:visible}
+  .purchase{min-width:0;font-size:11px}
+  .reason{max-width:none}
+  *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  @page{size:A4;margin:12mm}
+}
+</style></head><body>
+<div class="top-actions">
+  <button class="theme-toggle" id="themeToggle" type="button" aria-pressed="false" aria-label="切换为浅色主题" title="切换为浅色主题">
+    <svg id="themeIcon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 9.8A5.8 5.8 0 0 1 6.2 2.5a5.5 5.5 0 1 0 7.3 7.3Z"/></svg>
+    <span class="label">浅色</span>
+  </button>
+  <button class="export-pdf" type="button" onclick="window.print()" title="导出为 PDF">导出 PDF</button>
+</div>
+
+<aside class="side">
+  <div class="brand">
+    <svg width="34" height="34" viewBox="0 0 40 40" aria-hidden="true">
+      <defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#48c7d9"/><stop offset="1" stop-color="#f0a52b"/></linearGradient></defs>
+      <ellipse cx="20" cy="20" rx="16" ry="9" transform="rotate(-28 20 20)" fill="none" stroke="url(#lg)" stroke-width="1.4" opacity=".9"/>
+      <circle cx="20" cy="20" r="4.6" fill="none" stroke="var(--txt)" stroke-width="1.5"/>
+      <circle cx="20" cy="20" r="1.6" fill="var(--amber)"/>
+      <circle cx="31.5" cy="9.5" r="2.1" fill="var(--cyan)"/>
+      <path d="M6 32.5h5M13.5 32.5h2.5M18.5 32.5h9" stroke="var(--rule)" stroke-width="1.2" stroke-linecap="round"/>
+    </svg>
+    <div><b>SIRIAgent</b><span>IMAGING PLAN</span></div>
+  </div>
+  <nav>
+    <a href="#plan"><span class="idx">01</span>卫星构成</a>
+    <a href="#cover"><span class="idx">02</span>覆盖与回放</a>
+    <a href="#purchase"><span class="idx">03</span>推荐计划</a>
+    <a href="#notes"><span class="idx">04</span>口径与精度</a>
+  </nav>
+  <div class="foot">{{ accuracy_note }}<br>{{ algo_label }}</div>
+</aside>
+
+<main>
+  <h1>{{ headline|safe }}</h1>
+  <div class="strip">
+    <div><div class="lab">选中卫星</div><div class="val">{{ sat_count }}</div></div>
+    <div><div class="lab">达标面积</div><div class="val amber">{{ "%.1f"|format(cards.qualified_area_pct or 0) }}<small>%</small></div></div>
+    <div><div class="lab">时间覆盖率</div><div class="val">{{ "%.2f"|format(cards.city_mean_temporal_coverage_pct or 0) }}<small>%</small></div></div>
+  </div>
+
+  <div class="context">
+    <div><span class="k">目标区域</span><span class="v">{{ city_name }}<small>{{ "%.0f"|format(city_area) }} km²</small></span></div>
+    <div><span class="k">任务</span><span class="v">{{ operation_label }}</span></div>
+    <div><span class="k">窗口开始</span><span class="v mono">{{ window_start }}<small>北京时间</small></span></div>
+    <div><span class="k">窗口结束</span><span class="v mono">{{ window_end }}<small>{{ window_hours }} h</small></span></div>
+  </div>
+
+  <section id="plan">
+    <h2>卫星构成</h2>
+    <p class="lede">选中的 {{ sat_count }} 颗星按推荐顺序排列；参数来自 RS-Service 的卫星档案。</p>
+    <table><thead><tr>
+      <th>卫星</th><th>类型</th><th class="num">分辨率</th><th class="num">幅宽</th><th class="num">过境</th><th class="num">累计可见</th>
+    </tr></thead><tbody>
+    {% for s in sats %}
+    <tr>
+      <td><span class="swatch" style="--c:{{ s.color }};--c-light:{{ s.color_light }}"></span>{{ s.name }}<span class="sat-id">NORAD {{ s.sat_id }}</span></td>
+      <td><span class="tag">{{ s.sensor_label }}</span></td>
+      <td class="num">{% if s.resolution_m %}{{ s.resolution_m }} m{% else %}—{% endif %}</td>
+      <td class="num">{% if s.swath_km %}{{ s.swath_km }} km{% else %}—{% endif %}</td>
+      <td class="num">{{ s.passes if s.passes is not none else "—" }}</td>
+      <td class="num">{% if s.cumulative_minutes is not none %}{{ "%.1f"|format(s.cumulative_minutes) }} min{% else %}—{% endif %}</td>
+    </tr>
+    {% endfor %}
+    </tbody></table>
+  </section>
+
+  <section id="cover">
+    <h2>覆盖与回放</h2>
+    <p class="lede">每个点是一个裁剪网格单元；颜色表示首次覆盖它的卫星。拖动时间轴查看覆盖累积，点按播放按 {{ speed_label }} 推进。</p>
+    <div class="mapwrap">
+      <canvas id="map" width="1280" height="720" role="img" aria-label="覆盖分布与回放"></canvas>
+      <div class="transport">
+        <button class="play" id="play" aria-label="播放">
+          <svg id="ico" viewBox="0 0 16 16"><path d="M4 2l10 6-10 6z"/></svg>
+        </button>
+        <input id="scrub" type="range" min="0" max="{{ events_count }}" value="0" step="1" aria-label="回放时间轴">
+        <div class="clock"><span id="now">—</span> · <span class="pct" id="pct">0%</span></div>
+      </div>
+      <div class="legend">
+        {% for s in sats %}<span><span class="swatch" style="--c:{{ s.color }};--c-light:{{ s.color_light }}"></span>{{ s.name }}</span>{% endfor %}
+        <span><span class="swatch" style="--c:var(--map-empty)"></span>未覆盖</span>
+      </div>
+    </div>
+    {% if weak %}
+    <h2>薄弱区</h2>
+    <table><thead><tr><th>网格</th><th class="num">面积</th><th class="num">时间覆盖率</th><th class="num">MRT</th></tr></thead><tbody>
+    {% for w in weak %}<tr><td class="mono">{{ w.grid_id }}</td><td class="num">{{ "%.1f"|format(w.area_km2) }} km²</td><td class="num">{{ "%.1f"|format(w.temporal_coverage_pct) }}%</td><td class="num">{{ "%.1f"|format(w.mrt_minutes) }} min</td></tr>{% endfor %}
+    </tbody></table>
+    {% endif %}
+  </section>
+
+  <section id="purchase">
+    <h2>推荐计划</h2>
+    <p class="lede">求解状态 <b>{{ optimality }}</b>；可行性 <b>{{ "是" if feasible else "否" }}</b>。下表是选中卫星在本窗口内的过境窗口。</p>
+    <table><thead><tr><th>卫星</th><th>开始</th><th>结束</th><th class="num">时长</th><th class="num">平均覆盖</th><th class="num">最大覆盖</th></tr></thead><tbody>
+    {% for p in passes %}<tr><td>{{ p.satellite }}</td><td class="mono">{{ p.start_label }}</td><td class="mono">{{ p.end_label }}</td><td class="num">{{ "%.1f"|format(p.duration_minutes) }} min</td><td class="num">{{ "%.2f"|format(p.average_covered_area_pct) }}%</td><td class="num">{{ "%.2f"|format(p.maximum_covered_area_pct) }}%</td></tr>{% endfor %}
+    </tbody></table>
+  </section>
+
+  <section id="notes">
+    <h2>口径与精度</h2>
+    <ul class="notes">{% for n in notes %}<li>{{ n }}</li>{% endfor %}</ul>
+    <footer>{{ algo_label }}<br>生成于 {{ generated_at }}</footer>
+  </section>
+</main>
+
+<script id="planData" type="application/json">{{ map_json | safe }}</script>
+<script>
+(function(){
+  var D = JSON.parse(document.getElementById('planData').textContent);
+  var cv = document.getElementById('map'), ctx = cv.getContext('2d');
+  var dpr = Math.min(2, window.devicePixelRatio || 1);
+  var W = cv.width, H = cv.height;
+  var bb = D.bbox, ev = D.events, TOTAL = D.total;
+  var pad = 46, cos = Math.cos((bb[1]+bb[3])/2*Math.PI/180);
+  var dx = (bb[2]-bb[0])*cos, dy = bb[3]-bb[1];
+  var sc = Math.min((W-2*pad)/dx, (H-2*pad)/dy);
+  var ox = (W-dx*sc)/2, oy = (H-dy*sc)/2;
+  function PX(lo,la){ return [ox+(lo-bb[0])*cos*sc, oy+(bb[3]-la)*sc]; }
+
+  var outline = D.outline.map(function(p){ return PX(p[0],p[1]); });
+  var cum = [], acc = 0;
+  ev.forEach(function(e){ acc += e.points.length; cum.push(acc); });
+
+  // 画布颜色不写死：深/浅两套都从当前主题的 CSS 变量和调色板取，切换主题时重绘。
+  var THEME = {fill:'#0d1a24', stroke:'#2f4a60', empty:'#2b4557', colors:D.colors};
+  function syncThemeColors(){
+    var cs = getComputedStyle(document.documentElement);
+    THEME.fill = cs.getPropertyValue('--map-fill').trim() || '#0d1a24';
+    THEME.stroke = cs.getPropertyValue('--map-stroke').trim() || '#2f4a60';
+    THEME.empty = cs.getPropertyValue('--map-empty').trim() || '#2b4557';
+    THEME.cyan = cs.getPropertyValue('--cyan').trim() || '#48c7d9';
+    THEME.amber = cs.getPropertyValue('--amber').trim() || '#f0a52b';
+    THEME.red = cs.getPropertyValue('--red').trim() || '#e0574a';
+    THEME.colors = document.documentElement.dataset.theme === 'light'
+      ? (D.colors_light || D.colors) : D.colors;
+  }
+
+  function draw(upto){
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    ctx.clearRect(0,0,W,H);
+    ctx.save(); ctx.scale(1,1);
+    ctx.beginPath();
+    outline.forEach(function(p,i){ i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]); });
+    ctx.closePath();
+    ctx.fillStyle = THEME.fill; ctx.fill();
+    ctx.strokeStyle = THEME.stroke; ctx.lineWidth = 1.6; ctx.stroke();
+
+    for (var i=0;i<upto;i++){
+      var e = ev[i], col = THEME.colors[e.sat_id] || THEME.cyan;
+      ctx.fillStyle = col;
+      var pts = e.points;
+      for (var k=0;k<pts.length;k++){
+        var p = PX(pts[k][0], pts[k][1]);
+        ctx.fillRect(p[0]-1.6, p[1]-1.6, 3.2, 3.2);
+      }
+    }
+    if (upto>0){
+      ctx.fillStyle = THEME.empty;
+      for (var u=0;u<D.uncovered.length;u++){
+        var q = PX(D.uncovered[u][0], D.uncovered[u][1]);
+        ctx.fillRect(q[0]-1.6, q[1]-1.6, 3.2, 3.2);
+      }
+    }
+    ctx.restore();
+  }
+
+  var scrub = document.getElementById('scrub');
+  var nowEl = document.getElementById('now');
+  var pctEl = document.getElementById('pct');
+  var btn = document.getElementById('play');
+  var ico = document.getElementById('ico');
+  var timer = null, idx = 0;
+
+  function label(i){
+    if (i<=0) return D.start_label;
+    return ev[i-1].label;
+  }
+  function paint(i){
+    idx = i;
+    draw(i);
+    nowEl.textContent = label(i);
+    var p = i>0 ? (cum[i-1]/TOTAL*100) : 0;
+    pctEl.textContent = p.toFixed(1)+'%';
+  }
+
+  scrub.addEventListener('input', function(){ stop(); paint(+scrub.value); });
+  function tick(){
+    if (idx >= ev.length){ stop(); return; }
+    idx++; scrub.value = idx; paint(idx);
+    if (idx >= ev.length) stop();
+  }
+  function play(){
+    if (idx >= ev.length) { idx = 0; scrub.value = 0; paint(0); }
+    timer = setInterval(tick, {{ tick_ms }});
+    ico.innerHTML = '<path d="M4 3h3v10H4zM9 3h3v10H9z"/>';
+    btn.setAttribute('aria-label','暂停');
+  }
+  function stop(){
+    if (timer){ clearInterval(timer); timer = null; }
+    ico.innerHTML = '<path d="M4 2l10 6-10 6z"/>';
+    btn.setAttribute('aria-label','播放');
+  }
+  btn.addEventListener('click', function(){ timer ? stop() : play(); });
+
+  // 侧栏导航：原生锚点 + 兜底 scrollIntoView，并高亮当前节
+  var links = Array.prototype.slice.call(document.querySelectorAll('nav a[href^="#"]'));
+  links.forEach(function(a){
+    a.addEventListener('click', function(ev){
+      var el = document.querySelector(a.getAttribute('href'));
+      if (!el) return;
+      ev.preventDefault();
+      el.scrollIntoView({behavior: 'smooth', block: 'start'});
+      try { history.replaceState(null, '', a.getAttribute('href')); } catch (e) {}
+      setActive(a.getAttribute('href').slice(1));
+    });
+  });
+  function setActive(id){
+    links.forEach(function(a){
+      a.setAttribute('aria-current', a.getAttribute('href') === '#'+id ? 'true' : 'false');
+    });
+  }
+  if ('IntersectionObserver' in window) {
+    var io = new IntersectionObserver(function(entries){
+      entries.forEach(function(en){ if (en.isIntersecting) setActive(en.target.id); });
+    }, {rootMargin: '-45% 0px -50% 0px', threshold: 0});
+    document.querySelectorAll('section[id]').forEach(function(sec){ io.observe(sec); });
+  }
+  setActive('plan');
+
+  // ---- theme toggle ----
+  var themeBtn = document.getElementById('themeToggle');
+  var themeIcon = document.getElementById('themeIcon');
+  var themeLabel = themeBtn.querySelector('.label');
+  var ICON_MOON = '<path d="M13.5 9.8A5.8 5.8 0 0 1 6.2 2.5a5.5 5.5 0 1 0 7.3 7.3Z"/>';
+  var ICON_SUN = '<circle cx="8" cy="8" r="3.2"/><path d="M8 1.2v1.6M8 13.2v1.6M1.2 8h1.6M13.2 8h1.6M3.2 3.2l1.1 1.1M11.7 11.7l1.1 1.1M12.8 3.2l-1.1 1.1M4.3 11.7l-1.1 1.1"/>';
+
+  function applyTheme(t, persist){
+    var light = t === 'light';
+    document.documentElement.dataset.theme = light ? 'light' : 'dark';
+    if (persist){
+      try { localStorage.setItem('siria-plan-theme', light ? 'light' : 'dark'); } catch (e) {}
+    }
+    themeBtn.setAttribute('aria-pressed', light ? 'true' : 'false');
+    themeBtn.title = light ? '切换为深色主题' : '切换为浅色主题';
+    themeBtn.setAttribute('aria-label', themeBtn.title);
+    themeLabel.textContent = light ? '深色' : '浅色';
+    themeIcon.innerHTML = light ? ICON_SUN : ICON_MOON;
+    syncThemeColors();
+    paint(idx);
+  }
+  themeBtn.addEventListener('click', function(){
+    applyTheme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light', true);
+  });
+
+  // 打印/导出 PDF 强制浅色，避免整页深色底；打印完恢复原主题
+  var themeBeforePrint = null;
+  window.addEventListener('beforeprint', function(){
+    themeBeforePrint = document.documentElement.dataset.theme || 'dark';
+    applyTheme('light', false);
+  });
+  window.addEventListener('afterprint', function(){
+    applyTheme(themeBeforePrint || 'dark', false);
+  });
+
+  // 默认停在最终累积状态：报告先给结论，播放键再从 0 回放
+  idx = ev.length;
+  scrub.value = idx;
+  applyTheme(document.documentElement.dataset.theme === 'light' ? 'light' : 'dark', false);
+  // 入场：一次淡入，不重复动画
+  cv.style.opacity = 0; cv.style.transition = 'opacity .5s ease-out';
+  requestAnimationFrame(function(){ cv.style.opacity = 1; });
+})();
+</script>
+</body></html>
