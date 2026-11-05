@@ -24,6 +24,6 @@ cd "/home/siri/桌面/RS-Service"
 ## 注意
 
 - `WorkingDirectory` 与 `ExecStart` 使用 `%h/桌面/RS-Service`，换路径时同步改两个文件。
-- 数据库在 `~/.local/share/rs-service/rs.db`，不在仓库。
+- 数据库是 PostgreSQL `rs_service`（DSN 由 `.env` 的 `RS_DATABASE_URL` 提供），不在仓库；旧 SQLite 文件仅作迁移源与单测回退。
 - `Persistent=true` 会在关机错过 03:00 后补跑一次。
 - 若本机需要代理访问 CelesTrak，在 service 里加 `Environment=RS_HTTP_PROXY=http://127.0.0.1:7890`。

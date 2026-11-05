@@ -4,7 +4,7 @@ SIRIAgent 的星历数据服务：本地数据库、每日 TLE 同步、REST、M
 
 ## 职责
 
-- 管理 111 颗国产遥感卫星的目录、TLE 历史、传感器与过境窗口。
+- 管理 102 颗国产遥感卫星的目录、TLE 历史、传感器与过境窗口。
 - 每天 03:00 从 CelesTrak GP 同步一次；失败最多重试 3 次，当天不再抓取。
 - 对 `SIRIAgent` 提供 `127.0.0.1` 上的 REST 与 MCP；不暴露公网。
 - CLI 是唯一实现，MCP 工具是薄包装。
@@ -31,7 +31,7 @@ uv pip install --python .venv/bin/python -e ".[dev]"
 .venv/bin/rs-service serve-mcp --port 8765
 ```
 
-数据库默认在 `~/.local/share/rs-service/rs.db`，可用 `RS_DB_PATH` 覆盖。
+数据库使用 PostgreSQL（默认 `127.0.0.1:5432/rs_service`，DSN 由 `.env` 的 `RS_DATABASE_URL` 提供）；旧 SQLite 文件仅作迁移源与单测回退。
 
 ## 目录
 
@@ -45,7 +45,7 @@ src/rs_service/
 ├── cli.py      rs-service init/sync/status/serve
 └── settings.py
 migrations/     Alembic
-data/           satellites_seed.json（111 颗目录，不含运行数据）
+data/           satellites_seed.json（102 颗目录，不含运行数据）
 tests/
 ```
 
