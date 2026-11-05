@@ -37,17 +37,17 @@ TASKS: tuple[dict[str, Any], ...] = (
         "operation": "task1",
         "supports_auto_expand": True,
         "label": "最少星达到覆盖率",
-        "required": [],
-        "advanced": ["area_target_pct", "fallback_area_target_pct"],
-        "description": "给定目标覆盖率与面积目标，求最少需要几颗星。",
+        "required": ["area_target_pct"],
+        "advanced": ["fallback_area_target_pct"],
+        "description": "给定面积覆盖目标，求最少需要几颗星。",
     },
     {
         "operation": "task2",
         "supports_auto_expand": False,
         "label": "最少星达到重访",
-        "required": ["mrt_target_minutes"],
+        "required": ["mrt_target_minutes", "area_target_pct"],
         "advanced": [],
-        "description": "给定 P95 重访上限，求最少需要几颗星。",
+        "description": "给定 P95 重访上限与面积目标，求最少需要几颗星。",
     },
     {
         "operation": "task3",
@@ -138,7 +138,7 @@ class PlanCreate(BaseModel):
         if start.tzinfo is None:
             start = start.replace(tzinfo=UTC)
         area_target = self.area_target_pct
-        if self.operation == "task1" and area_target is None:
+        if area_target is None:
             area_target = 90.0
         return PlanSpec(
             operation=self.operation,

@@ -53,7 +53,8 @@ curl -s http://127.0.0.1:8766/api/v1/satellites/40118
 - AOI 支持省/市/区县 adcode 或 `POLYGON` WKT；只允许浙江省内。
 - 目录 65 颗（61 光学 + 4 高光谱）；SAR 缺原生入射角带，暂不参与。
 - 云量默认按 Open-Meteo 逐小时 `cloud_cover > 70%` 剔除访问；取不到时不过滤并在 assumptions 说明。
-- `task1` 不再要求 `temporal_coverage_target_pct`：服务端固定最小阈值（0.001%）按“面积至少成像一次”选星，面积目标由 `area_target_pct`（默认 90）判定；`达标面积` 是达到该阈值的面积占比。其他四个任务仍使用时间阈值。
+- `task1` 不再要求 `temporal_coverage_target_pct`：服务端固定最小阈值（0.001%）按“面积至少成像一次”选星；`area_target_pct` 是**必填的面积覆盖目标**（UI 预填 90），`达标面积` 是达到该阈值的面积占比。
+- `task2` 必填 `mrt_target_minutes` 与 `area_target_pct`（UI 预填 90）；task3 的覆盖率阈值已经可填；task4/5 的面积维度由分位/面积加权指标表达，不单独暴露面积目标。
 - `auto_expand` 只允许 `task1`：先按请求窗口算，不达标再扩到 72h（最多 2 次求解）；7 天请手动把 `horizon_h` 设成 168。结果 `window` 返回请求/实际窗口和 `expanded`，报告按实际窗口展示。
 - TLE 年龄按 `tle_record.epoch_utc` 实时计算：>72h 标 degraded，全部候选 >168h 时返回 `tle_stale`；`plan-options.tle` 暴露 `max_age_hours` / `degraded` / `stale`。
 - `rs-service-sync.timer` 每天 03:00 同步；TLE 过期时先跑一次 `rs-service sync`。

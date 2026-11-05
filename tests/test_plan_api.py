@@ -22,6 +22,7 @@ def test_plan_job_lifecycle(monkeypatch) -> None:
         json={
             "operation": "task1",
             "aoi_code": "330100",
+            "area_target_pct": 90,
             "start_utc": "2026-11-05T00:00:00Z",
         },
     )
@@ -66,7 +67,7 @@ def test_report_endpoint_renders_html(monkeypatch, tmp_path) -> None:
         json={
             "operation": "task1",
             "aoi_code": "330100",
-            "temporal_coverage_target_pct": 90,
+            "area_target_pct": 90,
         },
     )
     job_id = response.json()["job_id"]

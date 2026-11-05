@@ -179,12 +179,13 @@ def test_auto_expand_rejected_for_other_tasks() -> None:
             operation="task2",
             aoi_code="330100",
             mrt_target_minutes=24,
+            area_target_pct=90,
             auto_expand=True,
         )
     model = PlanCreate(
         operation="task1",
         aoi_code="330100",
-        temporal_coverage_target_pct=10,
+        area_target_pct=90,
         auto_expand=True,
     )
     assert model.to_spec().auto_expand is True
@@ -202,16 +203,17 @@ def test_five_tasks_only() -> None:
 
 def test_plan_create_requires_aoi_and_task_fields() -> None:
     with pytest.raises(ValidationError):
-        PlanCreate(operation="task1", temporal_coverage_target_pct=90)
-    model = PlanCreate(operation="task1", aoi_code="330100")
+        PlanCreate(operation="task1", area_target_pct=90)
+    model = PlanCreate(operation="task1", aoi_code="330100", area_target_pct=90)
     assert model.to_spec().temporal_coverage_target_pct == 0.001
     model = PlanCreate(
         operation="task1",
         aoi_wkt="POLYGON ((120 30, 121 30, 121 31, 120 30))",
+        area_target_pct=90,
     )
     assert model.to_spec().temporal_coverage_target_pct == 0.001
     with pytest.raises(ValidationError):
-        PlanCreate(operation="task2", aoi_code="330100")
+        PlanCreate(operation="task2", aoi_code="330100", area_target_pct=90)
 
 
 def test_plan_create_to_spec_defaults_timezone() -> None:
@@ -219,6 +221,7 @@ def test_plan_create_to_spec_defaults_timezone() -> None:
         operation="task2",
         aoi_code="330100",
         mrt_target_minutes=24,
+        area_target_pct=90,
         start_utc=datetime(2026, 11, 5),
     )
     spec = model.to_spec()
