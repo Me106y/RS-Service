@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "note": "人工核对值。仅收录 raw_spec 无法自动配对、且公开标称值明确的条目。confidence 一律记 approx。",
+  "overrides": [
+    {
+      "name": "GF-3",
+      "mode": "条带",
+      "swath_km": 30.0,
+      "raw": "1 m 聚束 / 3 m 条带 / 10–500 m 扫描；10–650 km",
+      "note": "公开标称：3 m 条带模式幅宽 30 km"
+    },
+    {
+      "name": "GF-3 02",
+      "mode": "条带",
+      "swath_km": 30.0,
+      "raw": "1 m 聚束 / 3 m 条带 / 10–500 m 扫描；10–650 km",
+      "note": "同 GF-3"
+    },
+    {
+      "name": "GF-3 03",
+      "mode": "条带",
+      "swath_km": 30.0,
+      "raw": "1 m 聚束 / 3 m 条带 / 10–500 m 扫描；10–650 km",
+      "note": "同 GF-3"
+    }
+  ]
+}
