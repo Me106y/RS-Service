@@ -69,7 +69,7 @@ h1 em{font-style:normal;color:var(--amber)}
 
 
 /* instrument strip */
-.strip{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;margin:30px 0 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line-soft)}
+.strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(0,1fr));gap:0;margin:30px 0 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line-soft)}
 .strip>div{padding:14px 16px 15px;border-right:1px solid var(--line-soft)}
 .strip>div:last-child{border-right:0}
 .context{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border-bottom:1px solid var(--line)}
@@ -108,6 +108,8 @@ td.num,th.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-ali
 .mapwrap{max-width:780px;border:1px solid var(--line);border-radius:10px;background:radial-gradient(120% 120% at 70% 10%,#0e1922,#080d12 70%);overflow:hidden}
 .mapwrap canvas{display:block;width:100%;height:auto;aspect-ratio:16/9}
 .transport{display:grid;grid-template-columns:auto 1fr auto;gap:16px;align-items:center;padding:12px 16px;border-top:1px solid var(--line);background:#0a1118}
+.transport.is-single{display:none}
+.playback-note{padding:12px 16px;border-top:1px solid var(--line);background:#0a1118;color:var(--muted);font-size:12.5px;line-height:1.55}
 .play{width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:#0f1922;color:var(--cyan);display:grid;place-items:center;cursor:pointer;padding:0}
 .play:hover{border-color:var(--cyan);background:#13212c}
 .play svg{width:13px;height:13px;fill:currentColor}
@@ -260,12 +262,12 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
   <div class="strip">
     <div><div class="lab">选中卫星</div><div class="val">{{ sat_count }}</div></div>
     <div><div class="lab">{{ target_label }}</div><div class="val amber">{{ "%.1f"|format(cards.qualified_area_pct or 0) }}<small>%</small></div></div>
-    <div><div class="lab">时间覆盖率</div><div class="val">{{ "%.2f"|format(cards.city_mean_temporal_coverage_pct or 0) }}<small>%</small></div></div>
+    {% if show_temporal %}<div><div class="lab">时间覆盖率</div><div class="val">{{ "%.2f"|format(cards.city_mean_temporal_coverage_pct or 0) }}<small>%</small></div></div>{% endif %}
   </div>
 
   <div class="context">
     <div><span class="k">目标区域</span><span class="v">{{ city_name }}<small>{{ "%.0f"|format(city_area) }} km²</small></span></div>
-    <div><span class="k">任务</span><span class="v">{{ operation_label }}{% if temporal_target is not none %}<small>单格时间覆盖率 ≥ {{ "%g"|format(temporal_target) }}%</small>{% endif %}</span></div>
+    <div><span class="k">任务</span><span class="v">{{ operation_label }}{% if show_temporal and temporal_target is not none %}<small>单格时间覆盖率 ≥ {{ "%g"|format(temporal_target) }}%</small>{% endif %}</span></div>
     <div><span class="k">窗口开始</span><span class="v mono">{{ window_start }}<small>北京时间</small></span></div>
     <div><span class="k">窗口结束</span><span class="v mono">{{ window_end }}<small>{{ window_hours }} h{% if window_note %} · {{ window_note }}{% endif %}</small></span></div>
   </div>
@@ -294,19 +296,20 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
     <p class="lede">每个点是一个裁剪网格单元；颜色表示首次覆盖它的卫星。拖动时间轴查看覆盖累积，点按播放按 {{ speed_label }} 推进；右侧百分比是时间进度，不是覆盖率。</p>
     <div class="mapwrap">
       <canvas id="map" width="1280" height="720" role="img" aria-label="覆盖分布与回放"></canvas>
-      <div class="transport">
+      <div class="transport{% if not show_playback %} is-single{% endif %}">
         <button class="play" id="play" aria-label="播放">
           <svg id="ico" viewBox="0 0 16 16"><path d="M4 2l10 6-10 6z"/></svg>
         </button>
         <input id="scrub" type="range" min="0" max="{{ events_count }}" value="0" step="1" aria-label="回放时间轴">
         <div class="clock"><span id="now">—</span> · <span class="pct">时间进度 <b id="pct">0%</b></span></div>
       </div>
+      {% if not show_playback %}<div class="playback-note">{{ playback_note }}</div>{% endif %}
       <div class="legend">
         {% for s in sats %}<span><span class="swatch" style="--c:{{ s.color }};--c-light:{{ s.color_light }}"></span>{{ s.name }}</span>{% endfor %}
         <span><span class="swatch" style="--c:var(--map-empty)"></span>未覆盖</span>
       </div>
     </div>
-    {% if weak %}
+    {% if show_weak %}
     <h2>薄弱区</h2>
     <table><thead><tr><th>网格</th><th class="num">面积</th><th class="num">时间覆盖率</th><th class="num">MRT</th></tr></thead><tbody>
     {% for w in weak %}<tr><td class="mono">{{ w.grid_id }}</td><td class="num">{{ "%.1f"|format(w.area_km2) }} km²</td><td class="num">{{ "%.1f"|format(w.temporal_coverage_pct) }}%</td><td class="num">{{ "%.1f"|format(w.mrt_minutes) }} min</td></tr>{% endfor %}

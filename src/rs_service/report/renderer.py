@@ -72,7 +72,16 @@ def _notes(result: dict[str, Any]) -> list[str]:
     if blocked:
         notes.append(f"未参与选星 {len(blocked)} 颗，原因见任务结果。")
     targets = result.get("targets") or {}
-    if targets.get("temporal_coverage_pct") is not None and targets.get("area_pct") is not None:
+    if result.get("operation") in {"task1", "task_1_min_satellites_temporal"}:
+        notes.append(
+            "达标判定：至少成像一次的面积占比目标 "
+            f"{targets.get('area_pct', 90):g}%；不设时间门槛。"
+        )
+        area_pct = float((result.get("summary_cards") or {}).get("qualified_area_pct") or 0.0)
+        area_target = targets.get("area_pct")
+        if area_target is not None and area_pct < float(area_target) - 1e-9:
+            notes.append(f"未达标面积 {100.0 - area_pct:.1f}%。")
+    elif targets.get("temporal_coverage_pct") is not None and targets.get("area_pct") is not None:
         notes.append(
             "达标判定：单格时间覆盖率 ≥ "
             f"{targets['temporal_coverage_pct']:g}%，达到该阈值的面积占比目标 "
@@ -129,6 +138,11 @@ def render_report(result: dict[str, Any]) -> str:
         if window.get("expanded") and window.get("requested_horizon_h") is not None
         else ""
     )
+    is_task1 = result.get("operation") in {
+        "task1",
+        "task_1_min_satellites_temporal",
+    }
+    show_temporal = not is_task1
     targets = result.get("targets") or {}
     temporal_target = targets.get("temporal_coverage_pct")
     area_target = targets.get("area_pct")
@@ -144,6 +158,14 @@ def render_report(result: dict[str, Any]) -> str:
 
     events_count = len(playback.get("events") or [])
     tick_ms = max(900, min(2500, 12000 // max(1, events_count)))
+    area_met = area_target is not None and area_pct >= float(area_target) - 1e-9
+    show_weak = bool(weak) and show_temporal and not area_met
+    show_playback = events_count > 1
+    playback_note = (
+        ""
+        if show_playback
+        else "本次方案只有 1 颗卫星 / 1 个过境，没有可播放的多帧序列；多星方案才有颜色累积回放。"
+    )
 
     environment = Environment(
         loader=FileSystemLoader(str(TEMPLATES)),
@@ -163,6 +185,10 @@ def render_report(result: dict[str, Any]) -> str:
         target_label=target_label,
         temporal_target=temporal_target,
         area_target=area_target,
+        show_temporal=show_temporal,
+        show_weak=show_weak,
+        show_playback=show_playback,
+        playback_note=playback_note,
         feasible=bool(result.get("feasible")),
         optimality=result.get("optimality") or "—",
         sat_count=count,

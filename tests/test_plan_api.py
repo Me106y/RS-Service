@@ -9,18 +9,19 @@ from rs_service.api.app import create_app
 
 
 def test_plan_job_lifecycle(monkeypatch) -> None:
-    monkeypatch.setattr(
-        plan_api,
-        "run_plan",
-        lambda spec: {"status": "completed", "candidate_count": 2, "operation": spec.operation},
-    )
+    seen = {}
+
+    def fake_run(spec):
+        seen["spec"] = spec
+        return {"status": "completed", "candidate_count": 2, "operation": spec.operation}
+
+    monkeypatch.setattr(plan_api, "run_plan", fake_run)
     client = TestClient(create_app())
     response = client.post(
         "/api/v1/plans",
         json={
             "operation": "task1",
             "aoi_code": "330100",
-            "temporal_coverage_target_pct": 90,
             "start_utc": "2026-11-05T00:00:00Z",
         },
     )
@@ -36,13 +37,15 @@ def test_plan_job_lifecycle(monkeypatch) -> None:
 
     assert body["status"] == "completed"
     assert body["result"]["candidate_count"] == 2
+    assert seen["spec"].temporal_coverage_target_pct == 0.001
+    assert seen["spec"].area_target_pct == 90.0
 
 
 def test_plan_rejects_missing_task_field() -> None:
     client = TestClient(create_app())
     response = client.post(
         "/api/v1/plans",
-        json={"operation": "task1", "aoi_code": "330100"},
+        json={"operation": "task2", "aoi_code": "330100"},
     )
     assert response.status_code == 422
 

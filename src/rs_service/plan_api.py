@@ -37,7 +37,7 @@ TASKS: tuple[dict[str, Any], ...] = (
         "operation": "task1",
         "supports_auto_expand": True,
         "label": "最少星达到覆盖率",
-        "required": ["temporal_coverage_target_pct"],
+        "required": [],
         "advanced": ["area_target_pct", "fallback_area_target_pct"],
         "description": "给定目标覆盖率与面积目标，求最少需要几颗星。",
     },
@@ -137,6 +137,9 @@ class PlanCreate(BaseModel):
         start = self.start_utc or datetime.now(UTC)
         if start.tzinfo is None:
             start = start.replace(tzinfo=UTC)
+        area_target = self.area_target_pct
+        if self.operation == "task1" and area_target is None:
+            area_target = 90.0
         return PlanSpec(
             operation=self.operation,
             aoi_code=self.aoi_code,
@@ -150,10 +153,12 @@ class PlanCreate(BaseModel):
             grid_size_km=self.grid_size_km,
             detection_step_s=self.detection_step_s,
             selection_time_limit_s=self.selection_time_limit_s,
-            temporal_coverage_target_pct=self.temporal_coverage_target_pct,
+            temporal_coverage_target_pct=(
+                0.001 if self.operation == "task1" else self.temporal_coverage_target_pct
+            ),
             mrt_target_minutes=self.mrt_target_minutes,
             n_budget=self.n_budget,
-            area_target_pct=self.area_target_pct,
+            area_target_pct=area_target,
             fallback_area_target_pct=self.fallback_area_target_pct,
             allow_area_fallback=self.allow_area_fallback,
             exact_budget=self.exact_budget,

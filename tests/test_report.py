@@ -83,12 +83,15 @@ def fake_result() -> dict:
 
 def test_render_report_contains_four_sections() -> None:
     html = render_report(fake_result())
-    for text in ["卫星构成", "覆盖与回放", "推荐计划", "口径与精度", "薄弱区", "杭州市", "GF-1"]:
+    for text in ["卫星构成", "覆盖与回放", "推荐计划", "口径与精度", "杭州市", "GF-1"]:
         assert text in html
     assert "MAP_DATA" not in html
     assert "目标 90%" in html
-    assert "单格时间覆盖率 ≥ 5%" in html
-    assert "时间进度" in html
+    assert "单格时间覆盖率" not in html
+    assert "时间覆盖率" not in html
+    assert "薄弱区" not in html
+    assert "本次方案只有 1 颗卫星" in html
+    assert "不设时间门槛" in html
 
 
 def test_write_report_writes_files_and_latest(tmp_path: Path) -> None:

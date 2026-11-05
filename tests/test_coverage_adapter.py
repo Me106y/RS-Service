@@ -203,15 +203,15 @@ def test_five_tasks_only() -> None:
 def test_plan_create_requires_aoi_and_task_fields() -> None:
     with pytest.raises(ValidationError):
         PlanCreate(operation="task1", temporal_coverage_target_pct=90)
+    model = PlanCreate(operation="task1", aoi_code="330100")
+    assert model.to_spec().temporal_coverage_target_pct == 0.001
+    model = PlanCreate(
+        operation="task1",
+        aoi_wkt="POLYGON ((120 30, 121 30, 121 31, 120 30))",
+    )
+    assert model.to_spec().temporal_coverage_target_pct == 0.001
     with pytest.raises(ValidationError):
-        PlanCreate(operation="task1", aoi_code="330100")
-    with pytest.raises(ValidationError):
-        PlanCreate(
-            operation="task1",
-            aoi_code="330100",
-            aoi_wkt="POLYGON ((120 30, 121 30, 121 31, 120 30))",
-            temporal_coverage_target_pct=90,
-        )
+        PlanCreate(operation="task2", aoi_code="330100")
 
 
 def test_plan_create_to_spec_defaults_timezone() -> None:
