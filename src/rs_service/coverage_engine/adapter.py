@@ -22,7 +22,7 @@ import re
 import shutil
 import tempfile
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -89,6 +89,7 @@ class PlanSpec:
     max_weak_areas: int = 10
     cloud_filter: bool = True
     cloud_threshold_pct: float = 70.0
+    auto_expand: bool = False
 
 
 @dataclass(frozen=True)
@@ -99,6 +100,21 @@ class Candidate:
     resolution_m: float
     swath_km: float
     omm: dict[str, Any]
+    tle_epoch_utc: str
+    tle_age_hours: float
+
+
+def tle_age_hours(epoch_utc: str | None, now: datetime | None = None) -> float | None:
+    if not epoch_utc:
+        return None
+    try:
+        moment = datetime.fromisoformat(epoch_utc.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    reference = now or datetime.now(UTC)
+    return (reference - moment).total_seconds() / 3600.0
 
 
 def _parse_resolution_m(raw_spec: str | None) -> float | None:
@@ -165,6 +181,20 @@ def collect_candidates(
             continue
         if resolution_m > max_resolution_m:
             continue
+        age_hours = tle_age_hours(tle.epoch_utc)
+        if age_hours is None:
+            blocked.append(_blocked(sat.sat_id, sat.name, sensor_type, "缺少 TLE 时间"))
+            continue
+        if age_hours > 168.0:
+            blocked.append(
+                _blocked(
+                    sat.sat_id,
+                    sat.name,
+                    sensor_type,
+                    f"TLE 年龄 {age_hours:.1f} 小时（>7 天），请先同步",
+                )
+            )
+            continue
         candidates.append(
             Candidate(
                 norad_id=int(sat.sat_id),
@@ -173,6 +203,8 @@ def collect_candidates(
                 resolution_m=resolution_m,
                 swath_km=swath_km,
                 omm=json.loads(tle.omm_json),
+                tle_epoch_utc=tle.epoch_utc,
+                tle_age_hours=age_hours,
             )
         )
     return candidates, blocked
@@ -480,7 +512,15 @@ def _annotate_result(
     candidates: list[Candidate],
     blocked: list[dict[str, Any]],
     cloud_stats: dict[str, Any],
+    tle_info: dict[str, Any],
 ) -> dict[str, Any]:
+    recommended = (result.get("selection") or {}).get("recommended_result") or {}
+    result["targets"] = {
+        "temporal_coverage_pct": recommended.get("temporal_coverage_target_pct"),
+        "area_pct": recommended.get("area_target_pct"),
+        "mrt_minutes": recommended.get("mrt_target_minutes"),
+    }
+    result["tle"] = tle_info
     result["blocked_satellites"] = blocked
     result["candidate_count"] = len(candidates)
     result["blocked_count"] = len(blocked)
@@ -498,6 +538,12 @@ def _annotate_result(
         )
     else:
         assumptions.append(f"本次未过滤云量：{cloud_stats.get('reason') or '未启用'}。")
+    if tle_info.get("max_age_hours") is not None:
+        suffix = "，结果标记 degraded" if tle_info.get("degraded") else ""
+        assumptions.append(
+            f"TLE 最大年龄 {tle_info['max_age_hours']:g} 小时；"
+            f"候选最新 TLE epoch {tle_info.get('latest_epoch_utc')}{suffix}。"
+        )
     result["assumptions"] = assumptions
     notes = result.setdefault("notes", [])
     if isinstance(notes, list):
@@ -518,8 +564,8 @@ def _annotate_result(
     return result
 
 
-def run_plan(spec: PlanSpec) -> dict[str, Any]:
-    """执行一次规划；返回引擎结果（含 blocked_satellites / candidate_count）。"""
+def _run_once(spec: PlanSpec) -> dict[str, Any]:
+    """按单一窗口执行一次规划。"""
 
     cloud_stats: dict[str, Any] = {"filtered": False, "reason": "未启用"}
     with session_scope() as session:
@@ -528,11 +574,26 @@ def run_plan(spec: PlanSpec) -> dict[str, Any]:
             session, spec.sensor_types, spec.max_resolution_m
         )
         if not candidates:
+            if any("TLE" in item.get("reason", "") for item in blocked):
+                raise PlanError(
+                    "tle_stale",
+                    "TLE 已超过 7 天，请先运行 `rs-service sync` 再规划",
+                    blocked_satellites=blocked,
+                )
             raise PlanError(
                 "no_candidates",
                 "当前传感器类型与分辨率筛选下没有可用候选卫星",
                 blocked_satellites=blocked,
             )
+        ages = [item.tle_age_hours for item in candidates]
+        max_age = max(ages) if ages else 0.0
+        tle_info = {
+            "latest_epoch_utc": max(item.tle_epoch_utc for item in candidates),
+            "max_age_hours": round(max_age, 1),
+            "min_age_hours": round(min(ages), 1) if ages else None,
+            "degraded": max_age > 72.0,
+            "stale": False,
+        }
         root = _write_workspace(candidates, aoi, adcode)
         try:
             payload = _payload(spec, candidates, adcode)
@@ -551,10 +612,63 @@ def run_plan(spec: PlanSpec) -> dict[str, Any]:
             result = execute_request(request, root=root, window_filter=_capture)
         finally:
             shutil.rmtree(root, ignore_errors=True)
-    _annotate_result(result, candidates, blocked, cloud_stats)
+    _annotate_result(result, candidates, blocked, cloud_stats, tle_info)
     if captured.get("store") is not None:
         _attach_report_data(result, candidates, aoi, captured["store"])
     return result
+
+
+def _horizons(spec: PlanSpec) -> list[float]:
+    horizons = [float(spec.horizon_h)]
+    if spec.auto_expand and spec.operation in {
+        "task1",
+        "task_1_min_satellites_temporal",
+    }:
+        # 168h 在 65 星/775 网格上会跑数分钟，自动扩窗只到 72h；7 天由用户手动选。
+        for extra in (72.0,):
+            if extra > spec.horizon_h + 1e-9 and all(
+                abs(extra - item) > 1e-9 for item in horizons
+            ):
+                horizons.append(extra)
+    return horizons
+
+
+def run_plan(spec: PlanSpec) -> dict[str, Any]:
+    """执行规划；task1 可自动扩窗到 72h，返回实际使用的窗口。"""
+
+    horizons = _horizons(spec)
+    last: dict[str, Any] | None = None
+    for attempt, horizon in enumerate(horizons, 1):
+        current = (
+            spec
+            if abs(horizon - spec.horizon_h) < 1e-9
+            else replace(spec, horizon_h=horizon)
+        )
+        result = _run_once(current)
+        expanded = abs(horizon - spec.horizon_h) > 1e-9
+        result["window"] = {
+            "requested_horizon_h": spec.horizon_h,
+            "used_horizon_h": horizon,
+            "expanded": expanded,
+            "attempts": attempt,
+        }
+        result["auto_expand"] = {
+            "requested": bool(spec.auto_expand),
+            "supported": spec.operation
+            in {"task1", "task_1_min_satellites_temporal"},
+            "expanded": expanded,
+            "attempts": attempt,
+        }
+        if expanded:
+            result.setdefault("assumptions", []).append(
+                f"自动扩窗：请求 {spec.horizon_h:g}h，实际 {horizon:g}h；"
+                "这是不同窗口下的结果，报告按实际窗口展示。"
+            )
+        last = result
+        if result.get("feasible"):
+            break
+    assert last is not None
+    return last
 
 
 __all__ = [
@@ -564,4 +678,5 @@ __all__ = [
     "PlanSpec",
     "collect_candidates",
     "run_plan",
+    "tle_age_hours",
 ]

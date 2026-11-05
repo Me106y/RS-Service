@@ -17,10 +17,16 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, model_validator
-from sqlalchemy import select
+from sqlalchemy import func, select
 
-from .coverage_engine.adapter import PlanError, PlanSpec, collect_candidates, run_plan
-from .db.models import Aoi
+from .coverage_engine.adapter import (
+    PlanError,
+    PlanSpec,
+    collect_candidates,
+    run_plan,
+    tle_age_hours,
+)
+from .db.models import Aoi, TleCurrent, TleRecord
 from .db.session import session_scope
 from .report import report_root, write_report
 
@@ -29,6 +35,7 @@ router = APIRouter(prefix="/api/v1", tags=["plans"])
 TASKS: tuple[dict[str, Any], ...] = (
     {
         "operation": "task1",
+        "supports_auto_expand": True,
         "label": "最少星达到覆盖率",
         "required": ["temporal_coverage_target_pct"],
         "advanced": ["area_target_pct", "fallback_area_target_pct"],
@@ -36,6 +43,7 @@ TASKS: tuple[dict[str, Any], ...] = (
     },
     {
         "operation": "task2",
+        "supports_auto_expand": False,
         "label": "最少星达到重访",
         "required": ["mrt_target_minutes"],
         "advanced": [],
@@ -43,6 +51,7 @@ TASKS: tuple[dict[str, Any], ...] = (
     },
     {
         "operation": "task3",
+        "supports_auto_expand": False,
         "label": "给定星数最大化达标面积",
         "required": ["n_budget", "temporal_coverage_target_pct"],
         "advanced": ["exact_budget", "area_target_pct"],
@@ -50,6 +59,7 @@ TASKS: tuple[dict[str, Any], ...] = (
     },
     {
         "operation": "task4",
+        "supports_auto_expand": False,
         "label": "给定星数最小化面积分位 MRT",
         "required": ["n_budget"],
         "advanced": ["area_target_pct", "mrt_area_quantile_pct"],
@@ -57,6 +67,7 @@ TASKS: tuple[dict[str, Any], ...] = (
     },
     {
         "operation": "task5",
+        "supports_auto_expand": False,
         "label": "给定星数最小化 ART",
         "required": ["n_budget"],
         "advanced": [],
@@ -90,6 +101,7 @@ class PlanCreate(BaseModel):
     aoi_wkt: str | None = None
     start_utc: datetime | None = None
     horizon_h: float = Field(default=72.0, gt=0, le=168.0)
+    auto_expand: bool = False
     sensor_types: list[Literal["optical", "hyperspectral", "sar"]] = Field(
         default=DEFAULT_SENSOR_TYPES, min_length=1
     )
@@ -117,6 +129,8 @@ class PlanCreate(BaseModel):
         missing = [name for name in _REQUIRED[self.operation] if getattr(self, name) is None]
         if missing:
             raise ValueError(f"缺少任务必填字段：{', '.join(missing)}")
+        if self.auto_expand and self.operation != "task1":
+            raise ValueError("只有 task1 支持自动扩窗")
         return self
 
     def to_spec(self) -> PlanSpec:
@@ -129,6 +143,7 @@ class PlanCreate(BaseModel):
             aoi_wkt=self.aoi_wkt,
             start_utc=start,
             horizon_h=self.horizon_h,
+            auto_expand=self.auto_expand,
             sensor_types=tuple(self.sensor_types),
             max_resolution_m=self.max_resolution_m,
             pointing=self.pointing,
@@ -213,7 +228,25 @@ def plan_options() -> dict[str, Any]:
     with session_scope() as session:
         aois = session.scalars(select(Aoi).order_by(Aoi.level, Aoi.code)).all()
         candidates, blocked = collect_candidates(session, tuple(DEFAULT_SENSOR_TYPES), 10_000)
+        latest_epoch = session.scalar(
+            select(func.max(TleRecord.epoch_utc)).join(
+                TleCurrent, TleCurrent.tle_id == TleRecord.id
+            )
+        )
+        oldest_epoch = session.scalar(
+            select(func.min(TleRecord.epoch_utc)).join(
+                TleCurrent, TleCurrent.tle_id == TleRecord.id
+            )
+        )
     reasons = Counter(item["reason"] for item in blocked)
+    age = tle_age_hours(oldest_epoch) if oldest_epoch else None
+    tle = {
+        "latest_epoch_utc": latest_epoch,
+        "oldest_epoch_utc": oldest_epoch,
+        "max_age_hours": round(age, 1) if age is not None else None,
+        "degraded": age is not None and age > 72.0,
+        "stale": age is not None and age > 168.0 and not candidates,
+    }
     return {
         "ok": True,
         "tasks": list(TASKS),
@@ -225,6 +258,7 @@ def plan_options() -> dict[str, Any]:
         ],
         "defaults": {
             "horizon_h": 72,
+            "auto_expand": False,
             "sensor_types": DEFAULT_SENSOR_TYPES,
             "max_resolution_m": 10,
             "pointing": "nadir",
@@ -246,6 +280,7 @@ def plan_options() -> dict[str, Any]:
             "blocked": len(blocked),
             "blocked_by_reason": dict(reasons),
         },
+        "tle": tle,
     }
 
 
