@@ -10,7 +10,7 @@
 | GET | `/satellites?category=&orbit=&payload_public=&limit=&offset=` | 卫星列表，默认 50 条 |
 | GET | `/aoi` | AOI 列表（浙江省级 / 市级 / 区县） |
 | GET | `/aoi/hangzhou` | 杭州 WGS84 市界 GeoJSON（Amap 转换，6406 点） |
-| GET | `/positions?at=ISO` | 102 颗星下点；`at` 省略为当前，支持时间轴 |
+| GET | `/positions?at=ISO` | 65 颗星下点；`at` 省略为当前，支持时间轴 |
 | GET | `/satellites/{norad}` | 卫星 + 传感器 + 当前 TLE |
 | GET | `/satellites/{norad}/passes?hours=24&lat=30.27&lon=120.16&min_elev=5&step=30` | 过境窗口；5° 可见，10°+太阳>10° 标 `optical_imaging_ok` |
 | GET | `/satellites/{norad}/track?hours=2&step=60&at=ISO` | 星下点轨迹；`at` 支持时间轴 |
@@ -25,7 +25,7 @@
 }
 ```
 
-`payload_public=false` 的 12 颗卫星只返回 `sensor_type/confidence`，不返回 `raw_spec`、分辨率、幅宽。
+当前 65 颗均为 `payload_public=true`；接口仍保留 `payload_public=false` 的脱敏分支，只返回 `sensor_type/confidence`，不返回 `raw_spec`、分辨率、幅宽。
 
 示例：
 
@@ -42,11 +42,11 @@ DSH 侧工具名带前缀：`mcp__rs-service__<tool>`。
 
 | 工具 | 入参 | 出参 |
 | --- | --- | --- |
-| `list_satellites` | `category?`, `orbit?` | 102 颗摘要（norad/name/category/orbit/payload_public） |
+| `list_satellites` | `category?`, `orbit?` | 65 颗摘要（norad/name/category/orbit/payload_public） |
 | `get_satellite` | `sat_id` | 目录 + 传感器摘要 + TLE 年龄 |
 | `next_passes` | `sat_id`, `hours?`, `lat?`, `lon?`, `min_elev?` | 过境窗口（AOS/LOS/TCA/最大仰角/太阳高度/光学可用） |
 | `ground_track` | `sat_id`, `hours?`, `step_s?` | 星下点轨迹 |
-| `list_positions` | — | 102 颗当前星下点（批量） |
+| `list_positions` | — | 65 颗当前星下点（批量） |
 | `current_position` | `sat_id` | 当前星下点 |
 | `sync_status` | — | 最近同步、重试状态、TLE 最大年龄 |
 | `list_aoi` | `level?`, `query?` | 浙江省级 / 市级 / 区县 AOI（adcode、名称、bbox、面积） |

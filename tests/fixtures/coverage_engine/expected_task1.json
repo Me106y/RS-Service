@@ -1,0 +1,93 @@
+{
+ "payload": {
+  "operation": "task1",
+  "city_adcode": "330100",
+  "start_utc": "2026-08-30T00:00:00Z",
+  "analysis_horizon_h": 8,
+  "grid_size_km": 5,
+  "detection_step_s": 10,
+  "max_windows": 100,
+  "temporal_coverage_target_pct": 5,
+  "area_target_pct": 90,
+  "allow_area_fallback": false,
+  "method": "greedy"
+ },
+ "status": "completed",
+ "feasible": true,
+ "optimality": "feasible_heuristic",
+ "summary_cards": {
+  "satellite_count": 12,
+  "city_mean_temporal_coverage_pct": 6.8731,
+  "city_mean_observable_duration_minutes": 32.991,
+  "qualified_area_pct": 90.0109,
+  "area_weighted_mrt_minutes": 179.647,
+  "area_weighted_art_minutes": 55.849,
+  "target_area_covered_time_pct": 0.5903,
+  "full_city_covered_time_pct": 0.0
+ },
+ "recommended_result": {
+  "method": "greedy",
+  "selected_sat_indices": [
+   21,
+   22,
+   31,
+   34,
+   36,
+   68,
+   69,
+   83,
+   86,
+   88,
+   94,
+   95
+  ],
+  "selected_sat_ids": [
+   43170,
+   43171,
+   45462,
+   46478,
+   46807,
+   54746,
+   54748,
+   58558,
+   60460,
+   60462,
+   60948,
+   60949
+  ],
+  "selected_sat_names": [
+   "YAOGAN-30 05A",
+   "YAOGAN-30 05B",
+   "YAOGAN-30 07C",
+   "HJ-2A",
+   "YAOGAN-30 08A",
+   "YAOGAN-36 04A",
+   "YAOGAN-36 04B",
+   "YAOGAN-39 05B",
+   "YAOGAN-43 01C",
+   "YAOGAN-43 01E",
+   "YAOGAN-43 02D",
+   "YAOGAN-43 02E"
+  ],
+  "area_target_pct": 90.0,
+  "temporal_coverage_target_pct": 5.0,
+  "achieved_area_pct": 90.01088966238333,
+  "feasible": true,
+  "status": "feasible_heuristic",
+  "note": "贪心达到时间覆盖率的面积目标，并完成反向删除；结果是近似解。",
+  "constraint_count": 0,
+  "min_simultaneous": 1,
+  "metrics": {
+   "horizon_s": 28800.0,
+   "total_area_m2": 16876879906.3191,
+   "area_weighted_temporal_coverage_pct": 6.873116718112524,
+   "average_observable_duration_s": 1979.4576148164067,
+   "area_weighted_mrt_s": 10778.820293120214,
+   "area_weighted_art_s": 3350.93559404546,
+   "qualified_area_pct": 90.01088966238333,
+   "qualified_grid_count": 684,
+   "area_coverage_time_pct": 0.5902777777777778,
+   "full_area_coverage_time_pct": 0.0
+  }
+ }
+}

@@ -1,0 +1,2076 @@
+# -*- coding: utf-8 -*-
+"""
+satellite_loader.py —— 卫星数据加载器（阶段 1，独立模块）
+
+职责（对应用户确认过的设计）：
+1. 搜索：从 CelesTrak 免费接口（无需 token）按 名字 / NORAD 编号 / 常用指标 搜索卫星。
+   本地有一份"编目缓存"（satcat.csv），可离线按 国家 / 发射年份 / 高度 过滤。
+2. 收藏夹：内置目录（只读，随软件发布）+ 用户收藏（单文件 data/user_catalog.toml）。
+   支持 新建 / 改名 / 删除（交互时提示一次）/ 移动条目；夹内条目只两类固定快照（Q132）：
+     norad_list  —— 手动挑选的星 / 编号清单（"固定快照"，新星不自动进来）
+     file        —— 导入的 TLE / 编号文件（程序复制到 data/user_files/ 统一管理）
+   旧式 name_filter（名字规则）/ celestrak_group（星座分组）条目仅兼容读取，不再新建。
+3. 下载与缓存：下载的文件存 data/tle_cache/，超时才重新下载，不重复请求。
+4. 解析：把 TLE 解析成"包装类" Satellite（内部装 skyfield 的 EarthSatellite，
+   对外提供 name / norad_id / sensor 字段，并把 .at() 等调用透传给轨道对象）。
+5. 交互菜单：命令行交互；以后做图形界面只需替换这一层，核心函数不动。
+
+阶段约定：本模块不修改 coverage_analysis.py，可被 validate_loader.py 独立测试。
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import os
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+from typing import Dict, List, Optional
+
+try:
+    import tomllib  # Python 3.11+
+except ImportError:  # pragma: no cover
+    tomllib = None
+
+from skyfield.api import EarthSatellite, load
+
+
+# ==================== 0. 路径与常量 ====================
+
+if getattr(sys, "frozen", False):
+    # PyInstaller 打包后：以 exe 所在目录为项目根（数据目录随交付文件夹走，可整体拷贝）
+    PROJECT_ROOT = Path(sys.executable).resolve().parent
+else:
+    PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DATA_DIR = PROJECT_ROOT / "data"
+CACHE_DIR = DATA_DIR / "tle_cache"          # 下载缓存（不入库）
+USER_FILES_DIR = DATA_DIR / "user_files"    # 用户导入文件的副本（程序管理，不入库）
+BUILTIN_CATALOG = DATA_DIR / "satellite_catalog.toml"   # 内置目录（入库）
+CONSTELLATIONS_CATALOG = DATA_DIR / "constellations.toml"  # 星座目录（入库，④页用）
+USER_CATALOG = DATA_DIR / "user_catalog.toml"           # 用户收藏（不入库）
+BUILTIN_LOCATIONS = DATA_DIR / "locations.toml"         # 内置常用地点（入库，只读）
+USER_LOCATIONS = DATA_DIR / "user_locations.toml"       # 用户常用地点（不入库，程序维护）
+SENSOR_PARAMS = DATA_DIR / "sensor_params.toml"          # 逐星传感器参数覆盖表（不入库，首次运行自动生成模板）
+
+# CelesTrak 免费接口（URL 即接口，无需 token）
+CELESTRAK_GP = "https://celestrak.org/NORAD/elements/gp.php"
+# 编目元数据接口（名字/所属/发射日期/轨道参数；不含 TLE，TLE 走 gp.php）
+CELESTRAK_SATCAT = "https://celestrak.org/satcat/records.php"
+# 全集现役 TLE（一次下载覆盖大多数单星查询，避免逐个请求）
+CELESTRAK_ACTIVE = f"{CELESTRAK_GP}?GROUP=active&FORMAT=TLE"
+USER_AGENT = "satellite-coverage-analysis/0.1 (educational project)"
+
+# 缓存默认过期时间（小时）——分档，避免频繁请求（Q86 拍板）：
+# - 全集 TLE / 星座分组：2 小时（跟随 CelesTrak 每 2 小时更新节奏，一天最多 12 次）
+# - 搜索档案 / 单星：24 小时（名字、发射日期几乎不变，单星仅作缓存兜底）
+DEFAULT_MAX_AGE_HOURS = 24
+ACTIVE_MAX_AGE_HOURS = 2.0    # active.tle 全集 TLE
+GROUP_MAX_AGE_HOURS = 2.0     # 星座分组 TLE
+
+_ACTIVE_FAILED = False   # 本次运行中全集缓存下载失败过则不再重复尝试
+
+CACHE_README = """\
+data/tle_cache/ —— 卫星数据缓存目录（程序自动维护；整个目录可随时删除，会自动重新下载）
+
+文件说明：
+- active.tle        全集现役 TLE：下载时刻"所有现役卫星"的快照（不是只存查过的星）；
+                    网络差时可能下载失败而缺失，程序会自动退回逐个单星下载
+- meta/*.csv        搜索结果"卫星档案表"（CelesTrak records.php，CSV 表格）
+- name/*.tle        按名字搜索的 TLE（gp.php?NAME=）
+- group/*.tle       按星座整组下载的 TLE（gp.php?GROUP=starlink 等，④页星座导入用）
+- norad/*.tle       单颗星 TLE（gp.php?CATNR=）
+- resolved/*.tle    成品：每个收藏夹解析后的合并 TLE（人看这个文件夹即可）
+
+缓存默认 24 小时过期后自动更新；GUI ③页有"缓存管理"可查看/清空。
+"""
+
+
+# ==================== 1. 包装类 Satellite ====================
+
+class Satellite:
+    """包装类：内部装 skyfield 的 EarthSatellite（发动机），外面贴铭牌。
+
+    - orbit   : EarthSatellite 轨道对象（负责 SGP4 计算）
+    - name    : 卫星名
+    - norad_id: NORAD 编目编号（TLE 第一行的 3~7 位）
+    - sensor  : 以后放该星专属传感器参数；现在 None = 用全局默认
+    - 透传    : 找不到的属性（如 .at()）自动转发给 orbit，覆盖算法无感知
+    """
+
+    def __init__(self, orbit: EarthSatellite, name: str, norad_id: int,
+                 sensor: Optional[dict] = None):
+        self.orbit = orbit
+        self.name = name
+        self.norad_id = norad_id
+        self.sensor = sensor
+
+    def __getattr__(self, item):
+        # 只有普通查找失败才进来：把 .at/.model 等全部转给轨道对象
+        return getattr(self.orbit, item)
+
+    def __repr__(self):
+        return f"Satellite({self.name!r}, NORAD {self.norad_id})"
+
+
+def _extract_norad_id(line1: str) -> Optional[int]:
+    """从 TLE 第 1 行提取 NORAD 编号（第 3~7 列，0 起 2:7）。"""
+    try:
+        return int(line1[2:7].strip())
+    except (ValueError, IndexError):
+        return None
+
+
+def parse_tle_text(text: str, ts=None) -> List[Satellite]:
+    """把 3LE 文本或 OMM JSON 解析成 Satellite 包装对象列表。
+
+    RS-Service 的 ``tle_record`` 只保存 CelesTrak OMM JSON（没有 TLE 两行），
+    因此适配层写出的工作文件是 ``{"satellites": [OMM, ...]}``。这里保留 3LE
+    分支，JSON 分支用 Skyfield 的 ``from_omm``，两条路最终都产出同一个包装类。
+    """
+    if ts is None:
+        ts = load.timescale(builtin=True)
+    stripped = text.lstrip()
+    if stripped.startswith("{"):
+        payload = json.loads(stripped)
+        rows = payload.get("satellites", []) if isinstance(payload, dict) else payload
+        sats: List[Satellite] = []
+        for row in rows:
+            orbit = EarthSatellite.from_omm(ts, row)
+            name = str(row.get("OBJECT_NAME") or row.get("name") or orbit.name or "")
+            norad = int(row.get("NORAD_CAT_ID") or row.get("norad_id") or orbit.model.satnum)
+            sats.append(Satellite(orbit, name, norad))
+        return sats
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    sats: List[Satellite] = []
+    i = 0
+    while i + 2 < len(lines):
+        name = lines[i]
+        if lines[i + 1].startswith("1 ") and lines[i + 2].startswith("2 "):
+            norad = _extract_norad_id(lines[i + 1])
+            try:
+                orbit = EarthSatellite(lines[i + 1], lines[i + 2], name, ts)
+                sats.append(Satellite(orbit, name, norad))
+            except Exception as e:
+                print(f"  跳过解析失败的卫星 {name}: {e}")
+            i += 3
+        else:
+            i += 1
+    return sats
+
+
+def parse_tle_records(text: str) -> List[dict]:
+    """把 3LE 文本解析成字典记录列表（不创建轨道对象，搜索时更快）。"""
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    records: List[dict] = []
+    i = 0
+    while i + 2 < len(lines):
+        name = lines[i]
+        if lines[i + 1].startswith("1 ") and lines[i + 2].startswith("2 "):
+            records.append({
+                "name": name,
+                "norad_id": _extract_norad_id(lines[i + 1]),
+                "line1": lines[i + 1],
+                "line2": lines[i + 2],
+            })
+            i += 3
+        else:
+            i += 1
+    return records
+
+
+# ==================== 2. 下载与缓存 ====================
+
+def _ensure_dirs():
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    USER_FILES_DIR.mkdir(parents=True, exist_ok=True)
+    _clean_legacy_cache()
+    _write_cache_readme()
+
+
+def _write_cache_readme():
+    """在缓存目录放一个说明文件，方便在资源管理器里直接看懂。"""
+    try:
+        (CACHE_DIR / "README.txt").write_text(CACHE_README, encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _clean_legacy_cache():
+    """清理早期版本留在缓存根目录的散文件（新版本只允许 active.tle 在根目录）。"""
+    if not CACHE_DIR.exists():
+        return
+    for p in CACHE_DIR.iterdir():
+        if p.is_file() and p.name not in ("active.tle", "README.txt"):
+            try:
+                p.unlink()
+            except OSError:
+                pass
+    # 早期版本 name/norad 用 .txt 后缀，统一为 .tle 后清理旧文件
+    for sub in ("name", "norad"):
+        d = CACHE_DIR / sub
+        if d.exists():
+            for p in d.glob("*.txt"):
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
+
+
+def _age_hours(path: Path) -> float:
+    """文件已存在多久（小时）。"""
+    if not path.exists():
+        return float("inf")
+    return (time.time() - path.stat().st_mtime) / 3600.0
+
+
+def _tle_text_ok(text: str) -> bool:
+    """粗略校验 TLE 文本完整性：行数是 3 的倍数，且每组三行格式正确。
+
+    防止网络截断把半截文件存进缓存（2026-08-06 实测出现整组下载被截断）。
+    """
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    if not lines or len(lines) % 3 != 0:
+        return False
+    for i in range(0, len(lines), 3):
+        name = lines[i].strip()
+        l1 = lines[i + 1].strip()
+        l2 = lines[i + 2].strip()
+        if not name or not l1.startswith("1 ") or not l2.startswith("2 "):
+            return False
+        if len(l1) < 69 or len(l2) < 69:
+            return False
+    return True
+def _tle_cache_ok(path: Path) -> bool:
+    """TLE 缓存文件是否完整（防截断缓存污染）。"""
+    try:
+        return _tle_text_ok(path.read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        return False
+
+
+def _tle_cache_ok(path: Path) -> bool:
+    """TLE 缓存文件是否完整（防截断缓存污染）。"""
+    try:
+        return _tle_text_ok(path.read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        return False
+
+
+def download_text(url: str, cache_name: str, max_age_hours: float = DEFAULT_MAX_AGE_HOURS,
+                  force: bool = False, offline: bool = False,
+                  retries: int = 2) -> Optional[Path]:
+    """下载文本文件并缓存；缓存未过期直接复用。返回本地文件路径。
+
+    - cache_name: 缓存文件名（如 satcat.csv / search_YAOGAN.txt）
+    - offline   : True 时不联网，只用缓存；缓存缺失则返回 None
+
+    容错（Q83/Q100）：HTTP 403 是 CelesTrak 的限流/禁止信号，不重试；
+    下载失败时若本地有**过期且完整**的旧缓存，回退使用它；
+    TLE 下载/缓存会做完整性校验（行数是 3 的倍数 + 每三行格式正确），
+    截断文件不会作为"好缓存"使用，但下载失败时允许**降级使用**并大声警告
+    （2026-08-06 修复：实测整组下载被网络截断成半截文件并污染缓存）。
+    """
+    _ensure_dirs()
+    cache_path = CACHE_DIR / cache_name
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    is_tle = cache_name.endswith(".tle")
+
+    def _cache_ok() -> bool:
+        return (not is_tle) or _tle_cache_ok(cache_path)
+
+    if cache_path.exists() and not force and _age_hours(cache_path) < max_age_hours:
+        if _cache_ok():
+            print(f"  [缓存命中] {cache_name}（{_age_hours(cache_path):.1f} 小时前下载）")
+            return cache_path
+        print(f"  [警告] 缓存 {cache_name} 内容不完整（可能被截断），忽略并重新下载。")
+    if offline:
+        if cache_path.exists() and _cache_ok():
+            print(f"  [离线] 缓存 {cache_name} 已过期（{_age_hours(cache_path):.1f}h），"
+                  f"离线模式不联网，回退使用过期缓存。")
+            return cache_path
+        if cache_path.exists():
+            print(f"  [离线] 缓存 {cache_name} 不完整（可能被截断），离线模式无网，"
+                  f"降级使用（结果可能缺最新卫星）。")
+            return cache_path
+        print(f"  [离线] 缓存 {cache_name} 缺失，且离线模式不联网，跳过下载。")
+        return None
+
+    def _fallback_stale(reason: str) -> Optional[Path]:
+        if cache_path.exists() and _cache_ok():
+            print(f"  [警告] {reason}；本地有过期缓存，回退使用：{cache_name}")
+            return cache_path
+        if cache_path.exists():
+            print(f"  [警告] {reason}；本地缓存 {cache_name} 不完整（可能被截断），"
+                  f"降级使用旧数据（结果可能缺最新卫星，稍后重试可自动修复）。")
+            return cache_path
+        return None
+
+    data = None
+    last_err = None
+    for attempt in range(1, retries + 1):   # 网络抖动自动重试
+        print(f"  [下载] {url}（第 {attempt}/{retries} 次尝试）")
+        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                data = resp.read()
+            if is_tle and not _tle_text_ok(data.decode("utf-8", errors="replace")):
+                raise ValueError("下载内容不完整（TLE 被截断），丢弃本次下载")
+            break
+        except urllib.error.HTTPError as e:
+            body = ""
+            try:
+                body = e.read(300).decode("utf-8", errors="replace").strip()
+            except Exception:
+                pass
+            detail = f"：{body}" if body else ""
+            print(f"  [失败] HTTP {e.code}: {url}{detail}")
+            if e.code == 403:
+                print("  [提示] 403 通常是 CelesTrak 限流/禁止（见 celestrak.org/usage-policy.php）；"
+                      "请降低请求频率或稍后重试。")
+            return _fallback_stale(f"HTTP {e.code}")   # 4xx 不重试
+        except Exception as e:
+            last_err = e
+            print(f"  [重试] 网络错误：{e}")
+            if attempt < retries:
+                time.sleep(2 * attempt)
+    if data is None:
+        print(f"  [失败] 重试 {retries} 次仍失败：{last_err}")
+        return _fallback_stale("下载失败")
+
+    # 先写临时文件再改名，避免半截文件污染缓存
+    fd, tmp_name = tempfile.mkstemp(dir=str(CACHE_DIR), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        os.replace(tmp_name, cache_path)
+    finally:
+        if os.path.exists(tmp_name):
+            os.remove(tmp_name)
+    print(f"  [完成] 已缓存到 {cache_path}")
+    return cache_path
+# ==================== 3. 编目搜索（CelesTrak satcat） ====================
+
+
+def _safe_cache_name(keyword: str, suffix: str) -> str:
+    """把用户输入的关键字转成安全的缓存文件名。"""
+    safe = "".join(ch for ch in keyword if ch.isalnum() or ch in "-_").strip() or "search"
+    return f"{safe[:40]}{suffix}"
+
+
+def search_metadata(keyword: str,
+                    max_results: int = 10000,
+                    country: Optional[str] = None,
+                    launch_year: Optional[str] = None,
+                    min_alt_km: Optional[float] = None,
+                    max_alt_km: Optional[float] = None,
+                    max_age_hours: float = DEFAULT_MAX_AGE_HOURS,
+                    offline: bool = False) -> List[dict]:
+    """按名字关键字搜索编目元数据（服务器端查询，结果按关键字缓存）。
+
+    只返回"在轨载荷"（PAYLOADS=1&ONORBIT=1），过滤掉碎片/火箭体/已再入物体；
+    元数据包含 所属/发射日期/轨道参数，可用于展示和二次筛选。
+    注意：编目不直接含 TLE；真正解析时走 gp.php。
+    """
+    import urllib.parse
+    url = (f"{CELESTRAK_SATCAT}?NAME={urllib.parse.quote(keyword)}"
+           f"&FORMAT=CSV&MAX={int(max_results)}&PAYLOADS=1&ONORBIT=1")
+    path = download_text(url, f"meta/{_safe_cache_name(keyword, '_meta.csv')}",
+                         max_age_hours, offline=offline)
+    if path is None:
+        return None   # 下载失败/离线无缓存；None=拿不到数据，[]=确实没有匹配
+
+    out = []
+    for row in _parse_meta_csv(path):
+        if country and country.upper() != row.get("owner", "").upper():
+            continue
+        if launch_year and not row.get("launch_date", "").startswith(launch_year):
+            continue
+        alt = _row_altitude(row)
+        if min_alt_km is not None and (alt is None or alt < min_alt_km):
+            continue
+        if max_alt_km is not None and (alt is None or alt > max_alt_km):
+            continue
+        out.append(_row_to_meta(row))
+    return out
+
+
+def _row_altitude(row: dict) -> Optional[float]:
+    """记录的平均轨道高度（km）；编目里可能缺字段，取不到返回 None。"""
+    try:
+        apo = float(row.get("apogee", ""))
+        peri = float(row.get("perigee", ""))
+        return (apo + peri) / 2.0
+    except ValueError:
+        return None
+
+
+def _safe_float(v: str) -> Optional[float]:
+    try:
+        return float(v)
+    except (ValueError, TypeError):
+        return None
+
+
+def _parse_meta_csv(path: Path) -> List[dict]:
+    """解析 CelesTrak satcat 返回的 CSV（键名统一小写）。"""
+    rows = []
+    try:
+        with open(path, "r", encoding="utf-8-sig", errors="replace", newline="") as f:
+            reader = csv.DictReader(f)
+            for raw in reader:
+                row = {k.lower().strip(): (v or "").strip() for k, v in raw.items()}
+                rows.append(row)
+    except Exception as e:
+        print(f"  [失败] 读取缓存失败：{e}")
+        return []
+    return rows
+
+
+def _row_to_meta(row: dict) -> dict:
+    """把 satcat 的一行转成统一的元数据字典（搜索/补全共用）。"""
+    try:
+        rid = int(row.get("norad_cat_id", ""))
+    except ValueError:
+        rid = None
+    return {
+        "name": row.get("object_name", ""),
+        "norad_id": rid,
+        "object_id": row.get("object_id", ""),   # 国际编号，如 1998-067A
+        "country": row.get("owner", ""),
+        "launch_date": row.get("launch_date", ""),
+        "object_type": row.get("object_type", ""),
+        "decayed": False,   # 已按 ONORBIT=1 过滤
+        "inclination": _safe_float(row.get("inclination", "")),
+        "altitude_km": _row_altitude(row),
+        "has_tle": False,   # 编目只有元数据；TLE 通过 gp.php 获取
+    }
+
+
+def search_metadata_by_norad(norad_id: int,
+                             max_age_hours: float = DEFAULT_MAX_AGE_HOURS,
+                             offline: bool = False) -> List[dict]:
+    """按 NORAD 编号查单星元数据（records.php?CATNR=，缓存到 meta/catnr_*.csv）。"""
+    url = f"{CELESTRAK_SATCAT}?CATNR={norad_id}&FORMAT=CSV&PAYLOADS=1&ONORBIT=1"
+    path = download_text(url, f"meta/catnr_{norad_id}.csv",
+                         max_age_hours, offline=offline)
+    if path is None:
+        return None   # 同上：None=拿不到数据
+    return [_row_to_meta(row) for row in _parse_meta_csv(path)]
+
+
+def search_metadata_by_intdes(intdes: str,
+                              max_results: int = 500,
+                              max_age_hours: float = DEFAULT_MAX_AGE_HOURS,
+                              offline: bool = False) -> List[dict]:
+    """按国际编号（发射编号，如 1998-067A）查该次发射的在轨载荷元数据。
+
+    records.php?INTDES=... 支持一次发射的多个物体；PAYLOADS=1&ONORBIT=1
+    过滤掉碎片/火箭体/已再入物体，和名字搜索口径一致。
+    """
+    import urllib.parse
+    url = (f"{CELESTRAK_SATCAT}?INTDES={urllib.parse.quote(intdes)}&FORMAT=CSV"
+           f"&MAX={int(max_results)}&PAYLOADS=1&ONORBIT=1")
+    path = download_text(url, f"meta/{_safe_cache_name(intdes, '_intdes.csv')}",
+                         max_age_hours, offline=offline)
+    if path is None:
+        return None   # 同上：None=拿不到数据
+    return [_row_to_meta(row) for row in _parse_meta_csv(path)]
+
+
+def search_by_name_online(keyword: str, max_age_hours: float = DEFAULT_MAX_AGE_HOURS,
+                          offline: bool = False) -> List[dict]:
+    """在线按名字模糊搜索（CelesTrak gp.php?NAME=...），返回 TLE 记录列表。"""
+    import urllib.parse
+    url = f"{CELESTRAK_GP}?NAME={urllib.parse.quote(keyword)}&FORMAT=TLE"
+    path = download_text(url, f"name/{_safe_cache_name(keyword, '.tle')}", max_age_hours,
+                         offline=offline)
+    if path is None:
+        return []
+    with open(path, "r", encoding="ascii", errors="replace") as f:
+        return parse_tle_records(f.read())
+
+
+def search_by_norad_online(norad_id: int, max_age_hours: float = DEFAULT_MAX_AGE_HOURS,
+                           offline: bool = False) -> List[dict]:
+    """在线按 NORAD 编号查询单星（CelesTrak gp.php?CATNR=...）。"""
+    url = f"{CELESTRAK_GP}?CATNR={norad_id}&FORMAT=TLE"
+    path = download_text(url, f"norad/{norad_id}.tle", max_age_hours, offline=offline)
+    if path is None:
+        return []
+    with open(path, "r", encoding="ascii", errors="replace") as f:
+        return parse_tle_records(f.read())
+
+
+def suggest_similar_names(keyword: str, n: int = 3, cutoff: float = 0.6,
+                          max_age_hours: float = DEFAULT_MAX_AGE_HOURS,
+                          offline: bool = False) -> List[str]:
+    """拼写纠错提示：在全集 TLE 名字表里找编辑距离最近的名字（标准库 difflib）。
+
+    仅用于"搜不到"时的提示（"你是不是想找 X？"），不自动替换搜索结果。
+    名字表来自 active.tle（全集现役 TLE 缓存），约 1.6 万条，毫秒级匹配。
+    先把带编号的全名（如 STARLINK-1234）归并成"家族名"（STARLINK）再匹配，
+    否则 difflib 拿短关键字匹配长编号名会找不到（Q79 实测教训）。
+    """
+    import difflib
+    import re
+    _, active_recs = load_active_tle(max_age_hours, offline=offline)
+    fams = set()
+    for r in active_recs:
+        # 去掉第一个数字之后的部分，再清掉两端分隔符：STARLINK-1234 -> STARLINK
+        fam = re.sub(r"[0-9].*$", "", r.get("name", "")).strip(" -_")
+        if len(fam) >= 3:
+            fams.add(fam.upper())   # 统一大写，否则小写输入（yaogen）匹配不到 YAOGAN
+    names = sorted(fams)
+    if not names:
+        return []
+    return difflib.get_close_matches(keyword.upper(), names, n=n, cutoff=cutoff)
+
+
+def ensure_active_tle(max_age_hours: float = ACTIVE_MAX_AGE_HOURS,
+                      force: bool = False, offline: bool = False) -> Optional[Path]:
+    """确保本地有"全集现役 TLE"缓存（一次下载，单星/名字查询优先查它）。
+
+    全集文件较大、网络差时容易失败，只试 1 次；失败会自动退回逐个单星下载。
+    """
+    global _ACTIVE_FAILED
+    if _ACTIVE_FAILED and not force:
+        return None
+    path = download_text(CELESTRAK_ACTIVE, "active.tle", max_age_hours,
+                         force, offline, retries=1)
+    if path is None and not offline:
+        _ACTIVE_FAILED = True
+    return path
+
+
+def load_active_tle(max_age_hours: float = ACTIVE_MAX_AGE_HOURS,
+                    offline: bool = False):
+    """读取全集缓存，返回 (by_id: {NORAD: 记录}, records: [记录, ...])。"""
+    path = ensure_active_tle(max_age_hours, offline=offline)
+    if path is None:
+        return {}, []
+    with open(path, "r", encoding="ascii", errors="replace") as f:
+        records = parse_tle_records(f.read())
+    by_id = {}
+    for r in records:
+        if r.get("norad_id") is not None:
+            by_id[r["norad_id"]] = r
+    return by_id, records
+
+
+def force_refresh_collections(collection_names: List[str]) -> int:
+    """强制重下全集与选中收藏夹的星座分组缓存（忽略缓存时长，Q86/Q87 拍板）。
+
+    编号清单基于全集，全集刷新后编号清单自动同步；只刷新批量数据，
+    不做任何逐颗下载。返回实际发起的请求次数（含全集 1 次）。
+    """
+    requests = 0
+    ensure_active_tle(force=True)
+    requests += 1
+    for name in collection_names:
+        c = find_collection(load_all_collections(), name)
+        if c is None:
+            continue
+        for e in c.get("entries", []):
+            if e.get("type") == "celestrak_group":
+                _records_by_group(e["value"], force=True)
+                requests += 1
+    return requests
+
+
+# ==================== 4. 收藏夹（内置 + 用户） ====================
+
+def load_builtin_collections() -> List[dict]:
+    """读取内置目录（只读）。格式见 data/satellite_catalog.toml。"""
+    if tomllib is None or not BUILTIN_CATALOG.exists():
+        return []
+    with open(BUILTIN_CATALOG, "rb") as f:
+        data = tomllib.load(f)
+    collections = []
+    for c in data.get("collections", []):
+        entries = _dedupe_entries(c.get("entries", []))
+        collections.append({
+            "name": c.get("name", "未命名"),
+            "description": c.get("description", ""),
+            "builtin": True,
+            "entries": entries,
+        })
+    return collections
+
+
+def load_user_collections() -> List[dict]:
+    """读取用户收藏；文件不存在时返回空列表（第一次运行会创建）。"""
+    if tomllib is None or not USER_CATALOG.exists():
+        return []
+    try:
+        with open(USER_CATALOG, "rb") as f:
+            data = tomllib.load(f)
+    except Exception as e:
+        print(f"  [警告] 用户收藏文件损坏，按空收藏处理：{e}")
+        return []
+    collections = []
+    for c in data.get("collections", []):
+        entries = _dedupe_entries(c.get("entries", []))
+        collections.append({
+            "name": c.get("name", "未命名"),
+            "description": c.get("description", ""),
+            "kind": c.get("kind", ""),
+            "builtin": False,
+            "entries": entries,
+        })
+    return collections
+
+
+def _dedupe_entries(entries: list) -> list:
+    """去掉完全重复的条目（同类型 + 同值只保留一条）。"""
+    seen = set()
+    out = []
+    for e in entries:
+        key = (e.get("type", ""), e.get("value", ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"type": e["type"], "value": e["value"]})
+    return out
+
+
+def _dump_collections(collections: List[dict]) -> str:
+    """把收藏夹列表写成 TOML 文本（结构简单，手写即可，无需第三方库）。"""
+    def q(s: str) -> str:
+        return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+    lines = []
+    for c in collections:
+        lines.append("[[collections]]")
+        lines.append(f"name = {q(c['name'])}")
+        if c.get("kind"):
+            lines.append(f"kind = {q(c['kind'])}")
+        if c.get("description"):
+            lines.append(f"description = {q(c['description'])}")
+        lines.append("entries = [")
+        for e in c["entries"]:
+            lines.append(f"  {{ type = {q(e['type'])}, value = {q(e['value'])} }},")
+        lines.append("]")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def save_user_collections(collections: List[dict]):
+    """保存用户收藏到 data/user_catalog.toml（先写临时文件再替换）。"""
+    _ensure_dirs()
+    text = ("# 用户收藏夹（程序自动维护，无需手动编辑）\n"
+            "# 条目类型（固定快照）：norad_list=编号清单 / file=导入文件；旧式规则仅兼容\n\n"
+            + _dump_collections(collections))
+    fd, tmp_name = tempfile.mkstemp(dir=str(USER_CATALOG.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(tmp_name, USER_CATALOG)
+    finally:
+        if os.path.exists(tmp_name):
+            os.remove(tmp_name)
+
+
+# ==================== 3.5 逐星传感器参数表 ====================
+
+SENSOR_TEMPLATE = """\
+# 逐星传感器参数覆盖表（程序自动生成模板；可用 GUI ⑤页编辑，也可手改）
+# 规则：只按 NORAD 编号精确匹配；未单独设置的卫星一律用⑤页全局默认值
+#       （视场半角 10°=视线张角假设值、最小仰角 10°，见答疑记录 Q147）。
+# 全局开关：swath_enabled = false 时，下面所有 swath_km 只记录、不参与计算
+#           （幅宽暂不生效）；true 时"逐星幅宽"生效——只有本表填了幅宽的星
+#           按它自己的轨道高度换算成等效视场半角，其余星一律按视场半角计算；
+#           高轨/静止卫星没有条带成像概念，会自动回退视场半角。
+# 每条可填：
+#   norad              必填：NORAD 编目编号（数字）
+#   fov_half_angle_deg 选填：视场半角（度）；留空用全局默认
+#   min_elevation_deg  选填：最小仰角（度）；留空用全局默认
+#   swath_km           选填：幅宽（公里）。填了幅宽就按该时刻轨道高度换算成
+#                            等效视场半角，仍按覆盖圆锥计算；同一行幅宽优先于视场半角。
+# 重复编号：文件里后写的覆盖先写的。
+# 参考幅宽（公开资料，使用前请自行核对；默认不启用）：
+#   Landsat-8 约 185 km；Sentinel-1 IW 约 250 km；SPOT-6/7 约 60 km；
+#   Pléiades 约 20 km（Neo 约 14 km）；WorldView-3 约 13.1 km。
+# 内置示例（取消注释即启用；注意 swath_enabled=false 时幅宽仍不生效）：
+# [[overrides]]
+# norad = 39084        # Landsat-8
+# swath_km = 185.0
+# [[overrides]]
+# norad = 20165        # SPOT-5
+# swath_km = 60.0
+"""
+
+
+def load_sensor_params(path: Optional[str] = None) -> List[dict]:
+    """读取逐星传感器参数表，返回 [{norad, fov_half_angle_deg|None, min_elevation_deg|None, swath_km|None}]。
+    文件不存在或损坏时返回空列表；无 norad 的行忽略。"""
+    p = Path(path) if path else SENSOR_PARAMS
+    if tomllib is None or not p.exists():
+        return []
+    try:
+        with open(p, "rb") as f:
+            data = tomllib.load(f)
+    except Exception as e:
+        print(f"  [警告] 传感器参数表损坏，按空表处理：{e}")
+        return []
+
+    def _flt(k: str) -> Optional[float]:
+        v = o.get(k)
+        if v is None or v == "":
+            return None
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    out: List[dict] = []
+    for o in data.get("overrides", []):
+        norad = o.get("norad")
+        if norad is None:
+            continue
+        try:
+            norad = int(norad)
+        except (TypeError, ValueError):
+            continue
+        out.append({
+            "norad": norad,
+            "fov_half_angle_deg": _flt("fov_half_angle_deg"),
+            "min_elevation_deg": _flt("min_elevation_deg"),
+            "swath_km": _flt("swath_km"),
+        })
+    return out
+
+
+def load_sensor_swath_enabled(path: Optional[str] = None) -> bool:
+    """读取全局开关 swath_enabled（默认 False = 幅宽只记录、不参与计算）。"""
+    p = Path(path) if path else SENSOR_PARAMS
+    if tomllib is None or not p.exists():
+        return False
+    try:
+        with open(p, "rb") as f:
+            data = tomllib.load(f)
+        return bool(data.get("swath_enabled", False))
+    except Exception:
+        return False
+
+
+def _dump_sensor_params(overrides: List[dict], swath_enabled: bool = False) -> str:
+    """把覆盖行写成 TOML 文本（模板注释 + 全局开关 + 覆盖行）。"""
+    lines = [SENSOR_TEMPLATE.rstrip(),
+             f"swath_enabled = {str(bool(swath_enabled)).lower()}", ""]
+    for o in overrides:
+        norad = o.get("norad")
+        if norad is None:
+            continue
+        lines.append("[[overrides]]")
+        lines.append(f"norad = {int(norad)}")
+        if o.get("swath_km"):
+            lines.append(f"swath_km = {float(o['swath_km']):g}")
+        if o.get("fov_half_angle_deg"):
+            lines.append(f"fov_half_angle_deg = {float(o['fov_half_angle_deg']):g}")
+        if o.get("min_elevation_deg"):
+            lines.append(f"min_elevation_deg = {float(o['min_elevation_deg']):g}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def save_sensor_params(overrides: List[dict], path: Optional[str] = None,
+                       swath_enabled: bool = False):
+    """原子写传感器参数表（先写临时文件再替换），含全局开关 swath_enabled。"""
+    p = Path(path) if path else SENSOR_PARAMS
+    _ensure_dirs()
+    text = _dump_sensor_params(overrides, swath_enabled)
+    fd, tmp_name = tempfile.mkstemp(dir=str(p.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(tmp_name, p)
+    finally:
+        if os.path.exists(tmp_name):
+            os.remove(tmp_name)
+
+
+def ensure_sensor_params(path: Optional[str] = None) -> Path:
+    """若模板不存在则生成（只含注释，无覆盖行）。返回文件路径。"""
+    p = Path(path) if path else SENSOR_PARAMS
+    if not p.exists():
+        save_sensor_params([], p)
+    return p
+
+
+def collection_norad_ids(collection: dict) -> List[int]:
+    """取一个收藏夹里全部卫星的 NORAD 编号（本地缓存离线解析，不联网）。
+    用于⑤页"从收藏夹批量添加"传感器参数。"""
+    ids: List[int] = []
+    try:
+        recs = resolve_collection(collection, offline=True)
+        for r in recs:
+            if r.get("norad_id") is not None:
+                ids.append(int(r["norad_id"]))
+    except Exception as e:
+        print(f"  [警告] 解析收藏夹 {collection.get('name', '')} 失败：{e}")
+    return sorted(set(ids))
+
+
+def collection_sources_dedup(src_names: List[str]) -> List[dict]:
+    """把多个收藏夹（按名字）解析并去重（按 NORAD），返回 [{name, norad, source}]。
+
+    本地缓存离线解析，不联网；找不到的收藏夹跳过。用于⑤页"从本次覆盖分析的
+    卫星来源导入"传感器参数表（去重后供搜索/筛选/选择）。
+    """
+    rows: List[dict] = []
+    seen = set()
+    all_cols = load_all_collections()
+    for nm in src_names:
+        col = find_collection(all_cols, nm)
+        if col is None:
+            continue
+        try:
+            recs = resolve_collection(col, offline=True)
+        except Exception as e:
+            print(f"  [警告] 解析收藏夹 {nm} 失败：{e}")
+            continue
+        for r in recs:
+            nid = r.get("norad_id")
+            if nid is None or nid in seen:
+                continue
+            seen.add(nid)
+            rows.append({"name": r.get("name", ""), "norad": int(nid),
+                         "source": col["name"]})
+    return rows
+
+
+def load_all_collections() -> List[dict]:
+    """内置 + 用户 合并（内置在前，标 builtin=True）。"""
+    return load_builtin_collections() + load_user_collections()
+
+
+
+def load_locations() -> List[dict]:
+    """合并内置 + 用户常用地点，返回 [{"name","lat","lon","radius_km"}]。"""
+    out = []
+    for p, source in ((BUILTIN_LOCATIONS, "builtin"), (USER_LOCATIONS, "user")):
+        if tomllib is None or not p.exists():
+            continue
+        try:
+            with open(p, "rb") as f:
+                data = tomllib.load(f)
+            for loc in data.get("locations", []):
+                out.append({**loc, "source": source})
+        except Exception:
+            continue
+    return out
+
+
+def _write_user_locations(locations: List[dict]):
+    """原子写 data/user_locations.toml（先写临时文件再替换）。"""
+    _ensure_dirs()
+    text = "# 用户常用地点（程序自动维护，无需手动编辑）\n\n"
+    for loc in locations:
+        text += (f'[[locations]]\nname = "{loc["name"]}"\n'
+                 f'lat = {loc["lat"]}\nlon = {loc["lon"]}\n'
+                 f'radius_km = {loc.get("radius_km", 5.0)}\n\n')
+    fd, tmp_name = tempfile.mkstemp(dir=str(USER_LOCATIONS.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(tmp_name, USER_LOCATIONS)
+    finally:
+        if os.path.exists(tmp_name):
+            os.remove(tmp_name)
+
+
+def save_user_location(name: str, lat: float, lon: float, radius_km: float = 5.0):
+    """保存/更新用户常用地点（同名覆盖）。"""
+    locs = []
+    if USER_LOCATIONS.exists():
+        with open(USER_LOCATIONS, "rb") as f:
+            locs = tomllib.load(f).get("locations", [])
+    locs = [x for x in locs if x.get("name") != name]
+    locs.append({"name": name, "lat": float(lat), "lon": float(lon),
+                 "radius_km": float(radius_km)})
+    _write_user_locations(locs)
+
+
+def delete_user_location(name: str) -> bool:
+    """删除用户常用地点（内置地点不可删）。返回是否删除成功。"""
+    if not USER_LOCATIONS.exists():
+        return False
+    with open(USER_LOCATIONS, "rb") as f:
+        locs = tomllib.load(f).get("locations", [])
+    new_locs = [x for x in locs if x.get("name") != name]
+    if len(new_locs) == len(locs):
+        return False
+    _write_user_locations(new_locs)
+    return True
+
+
+def load_constellations() -> List[dict]:
+    """读取星座目录（data/constellations.toml，入库只读），④页"星座导入"用。"""
+    if tomllib is None or not CONSTELLATIONS_CATALOG.exists():
+        return []
+    with open(CONSTELLATIONS_CATALOG, "rb") as f:
+        data = tomllib.load(f)
+    return list(data.get("constellations", []))
+
+
+def find_collection(collections: List[dict], name: str) -> Optional[dict]:
+    for c in collections:
+        if c["name"] == name:
+            return c
+    return None
+
+
+def create_collection(name: str, description: str = "", kind: str = "") -> bool:
+    """新建用户收藏夹；同名返回 False。kind 用于标记特殊收藏夹（如 constellation）。"""
+    user = load_user_collections()
+    if find_collection(user, name) or find_collection(load_builtin_collections(), name):
+        print(f"  [失败] 已存在同名收藏夹：{name}")
+        return False
+    user.append({"name": name, "description": description, "kind": kind,
+                 "builtin": False, "entries": []})
+    save_user_collections(user)
+    print(f"  [完成] 已新建收藏夹：{name}")
+    return True
+
+
+def rename_collection(old_name: str, new_name: str) -> bool:
+    """改用户收藏夹名；内置夹只读不可改。"""
+    user = load_user_collections()
+    c = find_collection(user, old_name)
+    if c is None:
+        print(f"  [失败] 未找到用户收藏夹：{old_name}")
+        return False
+    if find_collection(user, new_name) or find_collection(load_builtin_collections(), new_name):
+        print(f"  [失败] 已存在同名收藏夹：{new_name}")
+        return False
+    c["name"] = new_name
+    save_user_collections(user)
+    print(f"  [完成] 已改名：{old_name} -> {new_name}")
+    return True
+
+
+def delete_collection(name: str) -> bool:
+    """删除用户收藏夹（交互菜单会先提示一次）。"""
+    user = load_user_collections()
+    c = find_collection(user, name)
+    if c is None:
+        print(f"  [失败] 未找到用户收藏夹：{name}")
+        return False
+    user.remove(c)
+    save_user_collections(user)
+    print(f"  [完成] 已删除收藏夹：{name}")
+    return True
+
+
+def copy_builtin_to_user(name: str, new_name: Optional[str] = None) -> bool:
+    """把内置夹复制到用户收藏（可改名），方便用户自由修改。"""
+    builtin = load_builtin_collections()
+    c = find_collection(builtin, name)
+    if c is None:
+        print(f"  [失败] 未找到内置收藏夹：{name}")
+        return False
+    target = new_name or (name + "（副本）")
+    if find_collection(load_user_collections(), target):
+        print(f"  [失败] 已存在同名用户收藏夹：{target}")
+        return False
+    user = load_user_collections()
+    user.append({"name": target, "description": c.get("description", ""),
+                 "builtin": False,
+                 "entries": [dict(e) for e in c["entries"]]})
+    save_user_collections(user)
+    print(f"  [完成] 已复制内置夹「{name}」到用户收藏「{target}」")
+    return True
+
+
+def add_entry(collection_name: str, entry_type: str, value: str) -> bool:
+    """向用户收藏夹加一条目（name_filter / norad_list / file）。"""
+    user = load_user_collections()
+    c = find_collection(user, collection_name)
+    if c is None:
+        print(f"  [失败] 未找到用户收藏夹：{collection_name}")
+        return False
+    if entry_type not in ("name_filter", "norad_list", "file", "celestrak_group"):
+        print(f"  [失败] 未知条目类型：{entry_type}")
+        return False
+    for e in c["entries"]:
+        if e["type"] == entry_type and e["value"] == value:
+            print(f"  [跳过] 「{collection_name}」已存在相同条目：{entry_type} = {value}")
+            return False
+    c["entries"].append({"type": entry_type, "value": value})
+    save_user_collections(user)
+    print(f"  [完成] 已加入「{collection_name}」：{entry_type} = {value}")
+    return True
+
+
+def add_norad_to_collection(collection_name: str, norad_ids: List[int]) -> bool:
+    """向收藏夹追加 NORAD 编号：已有编号清单则合并去重，否则新建一条清单。"""
+    user = load_user_collections()
+    c = find_collection(user, collection_name)
+    if c is None:
+        print(f"  [失败] 未找到用户收藏夹：{collection_name}")
+        return False
+    new_ids = {str(i) for i in norad_ids if str(i).isdigit()}
+    if not new_ids:
+        return False
+    target = None
+    for e in c["entries"]:
+        if e["type"] == "norad_list":
+            existing = {x for x in e["value"].replace(",", " ").split() if x.strip().isdigit()}
+            merged = sorted(existing | new_ids, key=lambda x: int(x))
+            e["value"] = " ".join(merged)
+            target = e
+            break
+    if target is None:
+        c["entries"].append({"type": "norad_list",
+                             "value": " ".join(sorted(new_ids, key=lambda x: int(x)))})
+    save_user_collections(user)
+    print(f"  [完成] 已向「{collection_name}」添加编号：{' '.join(sorted(new_ids, key=lambda x: int(x)))}")
+    return True
+
+
+def remove_norad_from_collection(collection_name: str, norad_id: int) -> bool:
+    """从收藏夹的编号清单中删除单个编号（清单删空则整条移除）。"""
+    user = load_user_collections()
+    c = find_collection(user, collection_name)
+    if c is None:
+        print(f"  [失败] 未找到用户收藏夹：{collection_name}")
+        return False
+    rid = str(norad_id)
+    removed = False
+    for e in list(c["entries"]):
+        if e["type"] == "norad_list":
+            ids = [x for x in e["value"].replace(",", " ").split() if x.strip().isdigit()]
+            if rid in ids:
+                ids.remove(rid)
+                removed = True
+            if ids:
+                e["value"] = " ".join(sorted(ids, key=lambda x: int(x)))
+            else:
+                c["entries"].remove(e)
+    if removed:
+        save_user_collections(user)
+        print(f"  [完成] 已从「{collection_name}」移除编号 {rid}")
+    else:
+        print(f"  [跳过] 编号 {rid} 不在「{collection_name}」中")
+    return removed
+
+
+def remove_entry(collection_name: str, index: int) -> bool:
+    """按序号删除用户收藏夹里的条目（0 起）。"""
+    user = load_user_collections()
+    c = find_collection(user, collection_name)
+    if c is None:
+        print(f"  [失败] 未找到用户收藏夹：{collection_name}")
+        return False
+    if not 0 <= index < len(c["entries"]):
+        print(f"  [失败] 序号越界：{index}")
+        return False
+    e = c["entries"].pop(index)
+    save_user_collections(user)
+    print(f"  [完成] 已移除「{collection_name}」第 {index + 1} 条：{e['type']} = {e['value']}")
+    return True
+
+
+def move_entry(from_name: str, index: int, to_name: str) -> bool:
+    """把条目从一个用户收藏夹移动到另一个（支持跨夹整理）。"""
+    user = load_user_collections()
+    src = find_collection(user, from_name)
+    dst = find_collection(user, to_name)
+    if src is None or dst is None:
+        print(f"  [失败] 收藏夹不存在：{from_name} / {to_name}")
+        return False
+    if not 0 <= index < len(src["entries"]):
+        print(f"  [失败] 序号越界：{index}")
+        return False
+    e = src["entries"].pop(index)
+    dst["entries"].append(e)
+    save_user_collections(user)
+    print(f"  [完成] 已把「{from_name}」的条目移到「{to_name}」")
+    return True
+
+
+def import_file_to_collection(file_path: str, collection_name: str,
+                              new_collection: bool = False) -> bool:
+    """导入本地 TLE / NORAD 编号文件：复制到 data/user_files/ 并加入收藏夹。"""
+    src = Path(file_path)
+    if not src.exists():
+        print(f"  [失败] 文件不存在：{src}")
+        return False
+    _ensure_dirs()
+    dst = USER_FILES_DIR / src.name
+    if dst.exists():
+        dst = USER_FILES_DIR / f"{src.stem}_{int(time.time())}{src.suffix}"
+    try:
+        import shutil
+        shutil.copy2(src, dst)
+    except Exception as e:
+        print(f"  [失败] 复制文件失败：{e}")
+        return False
+    print(f"  [完成] 已复制文件到：{dst}")
+
+    if new_collection:
+        if not create_collection(collection_name):
+            return False
+    return add_entry(collection_name, "file", str(dst))
+
+
+# ==================== 5. 把收藏夹解析成卫星列表 ====================
+
+def _records_from_file(file_path: str, max_age_hours: float, offline: bool,
+                       progress=None) -> List[dict]:
+    """读本地文件：TLE 文本 或 NORAD 编号清单。"""
+    path = Path(file_path)
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path  # 相对路径统一按项目根解析（内置 file 条目用）
+    if not path.exists():
+        print(f"  [警告] 导入文件不存在，跳过：{path}")
+        return []
+    with open(path, "r", encoding="ascii", errors="replace") as f:
+        text = f.read()
+    records = parse_tle_records(text)
+    if records:
+        return records
+    # 不是 TLE，按 NORAD 编号清单处理（一行一个，或逗号/空格分隔）
+    ids = []
+    for tok in text.replace(",", " ").split():
+        if tok.strip().isdigit():
+            ids.append(int(tok))
+    return _records_by_norad_ids(ids, max_age_hours, offline, progress=progress)
+
+
+def _records_by_norad_ids(norad_ids: List[int], max_age_hours: Optional[float] = None,
+                          offline: bool = False, progress=None) -> List[dict]:
+    """按编号清单找 TLE：只从全集 active.tle 本地拿（+已有单星缓存兜底），
+    缺失**不再联网**（Q87 拍板：退役/保密/新发射的星下载也拿不到，等全集更新）。
+    彻底消除逐颗请求，从源头规避限流。"""
+    if max_age_hours is None:
+        max_age_hours = ACTIVE_MAX_AGE_HOURS
+    by_id, _ = load_active_tle(max_age_hours, offline=offline)
+    out = []
+    missing = []
+    for rid in norad_ids:
+        r = by_id.get(rid)
+        if r is not None:
+            out.append(r)
+            continue
+        cached = search_by_norad_online(rid, max_age_hours, offline=True)   # 只读已有缓存
+        if cached:
+            out.append(cached[0])
+        else:
+            missing.append(rid)
+    if missing:
+        shown = "、".join(str(x) for x in missing[:20])
+        more = f" 等 {len(missing)} 个" if len(missing) > 20 else ""
+        print(f"  [提示] 编号 {shown}{more} 不在全集/缓存中（可能已退役/保密/新发射），"
+              f"未联网下载，等全集更新后重试。")
+    total = len(norad_ids)
+    for i, rid in enumerate(norad_ids, 1):
+        if progress:
+            progress(i, total, f"获取编号 {rid}（{i}/{total}）")
+    return out
+
+
+def _is_debris_name(name: str) -> bool:
+    """根据名字判断是否为碎片/火箭体（黑名单过滤用，大小写不敏感）。"""
+    n = name.upper()
+    return "DEB" in n or "R/B" in n
+
+
+# CelesTrak 星座分组 -> 全集 TLE 中的名字特征（用于分组下载失败/离线时的回退）
+_GROUP_NAME_FALLBACK = {
+    "starlink": "STARLINK",
+    "oneweb": "ONEWEB",
+    "beidou": "BEIDOU",
+    "gps-ops": "GPS",
+    "glo-ops": "GLONASS",
+    "galileo": "GALILEO",
+    "iridium-NEXT": "IRIDIUM",
+    "goes": "GOES",
+    "noaa": "NOAA",
+    # weather 无统一名字特征，无法回退
+}
+
+
+def _records_by_name_filter(keyword: str, max_age_hours: Optional[float] = None,
+                            offline: bool = False) -> List[dict]:
+    """按名字规则找 TLE：优先查"全集现役 TLE"缓存（按名字子串匹配），
+    黑名单排除名字含碎片/火箭体标记的物体，保证只含载荷；
+    缓存里没有匹配时退回 gp.php?NAME=。
+
+    注意：早期版本用"编目白名单"（records.php 元数据）过滤，但该接口有约一万条
+    硬上限，STARLINK 会漏 769 颗；改为黑名单后全集内载荷全量保留
+    （实测 YAOGAN/GAOFEN 两种口径结果一致，无副作用）。
+    """
+    if max_age_hours is None:
+        max_age_hours = ACTIVE_MAX_AGE_HOURS
+    _, active_recs = load_active_tle(max_age_hours, offline=offline)
+    recs = [r for r in active_recs if keyword.lower() in r.get("name", "").lower()
+            and not _is_debris_name(r.get("name", ""))]
+    if recs:
+        return recs
+    online = search_by_name_online(keyword, max_age_hours, offline=offline)
+    return [r for r in online if not _is_debris_name(r.get("name", ""))]
+
+
+def _records_by_group(group: str, max_age_hours: Optional[float] = None,
+                      offline: bool = False, force: bool = False) -> List[dict]:
+    """按 CelesTrak 星座分组（GROUP=starlink / beidou 等）下载整组 TLE。
+
+    分组是官方维护的"一个星座一整包"，不受 records.php 约万条上限影响；
+    同样做黑名单过滤（个别分组可能混入火箭体）。
+    分组下载失败/离线时（如 CelesTrak 2 小时更新窗口、缓存被清），
+    回退用全集 active.tle 按名字特征过滤（近似但可离线工作，Q84）。
+    """
+    import urllib.parse
+    if max_age_hours is None:
+        max_age_hours = GROUP_MAX_AGE_HOURS
+    url = f"{CELESTRAK_GP}?GROUP={urllib.parse.quote(group)}&FORMAT=TLE"
+    path = download_text(url, f"group/{_safe_cache_name(group, '.tle')}",
+                         max_age_hours, force=force, offline=offline)
+    if path is None:
+        kw = _GROUP_NAME_FALLBACK.get(group)
+        if kw:
+            _, active_recs = load_active_tle(max_age_hours, offline=True)
+            recs = [r for r in active_recs
+                    if kw.lower() in r.get("name", "").lower()
+                    and not _is_debris_name(r.get("name", ""))]
+            if recs:
+                print(f"  [回退] GROUP={group} 未下载，已用全集 TLE 按名字「{kw}」"
+                      f"过滤到 {len(recs)} 颗（近似口径）")
+                return recs
+        return []
+    with open(path, "r", encoding="ascii", errors="replace") as f:
+        recs = parse_tle_records(f.read())
+    return [r for r in recs if not _is_debris_name(r.get("name", ""))]
+
+
+def _entry_units(entry: dict) -> int:
+    """一个条目要处理的"单元"数（编号清单按编号数算，其他按 1 算）。"""
+    if entry.get("type") == "norad_list":
+        ids = [x for x in entry.get("value", "").replace(",", " ").split()
+               if x.strip().isdigit()]
+        return max(1, len(ids))
+    return 1
+
+
+def collection_units(collection: dict) -> int:
+    """一个收藏夹的解析单元总数（用于进度条）。"""
+    return sum(_entry_units(e) for e in collection.get("entries", []))
+
+
+def resolve_collection(collection: dict, max_age_hours: float = DEFAULT_MAX_AGE_HOURS,
+                       offline: bool = False, progress=None) -> List[dict]:
+    """把一个收藏夹解析成 TLE 记录列表（按 NORAD 编号去重，保留顺序）。
+
+    progress 是可选的进度回调：progress(done, total, 说明文字)。
+    """
+    records: Dict[int, dict] = {}
+    total = collection_units(collection)
+    done = 0
+    for entry in collection["entries"]:
+        etype, value = entry["type"], entry["value"]
+        units = _entry_units(entry)
+        if etype == "name_filter":
+            recs = _records_by_name_filter(value, offline=offline)
+            done += units
+            if progress:
+                progress(done, total, f"处理条目：{_entry_label(entry)}")
+        elif etype == "celestrak_group":
+            recs = _records_by_group(value, offline=offline)
+            done += units
+            if progress:
+                progress(done, total, f"处理条目：{_entry_label(entry)}")
+        elif etype == "norad_list":
+            ids = [int(x) for x in value.replace(",", " ").split() if x.strip().isdigit()]
+            def sub(d, t, m):
+                if progress:
+                    progress(done + d, total, m)
+            recs = _records_by_norad_ids(ids, offline=offline, progress=sub)
+            done += units
+        elif etype == "file":
+            def sub2(d, t, m):
+                if progress:
+                    progress(done + d, total, m)
+            recs = _records_from_file(value, max_age_hours, offline, progress=sub2)
+            done += units
+        else:
+            print(f"  [警告] 未知条目类型：{etype}，跳过")
+            continue
+        for r in recs:
+            if r.get("norad_id") is not None:
+                records[r["norad_id"]] = r
+    return list(records.values())
+
+
+def resolve_collections_to_records(collection_names: List[str],
+                                   max_age_hours: float = DEFAULT_MAX_AGE_HOURS,
+                                   offline: bool = False, progress=None) -> List[dict]:
+    """选中多个收藏夹 -> 合并去重 -> 下载 TLE -> TLE 记录列表。"""
+    all_collections = load_all_collections()
+    cols = []
+    for name in collection_names:
+        c = find_collection(all_collections, name)
+        if c is None:
+            print(f"  [警告] 找不到收藏夹：{name}，跳过")
+            continue
+        cols.append(c)
+    total = sum(collection_units(c) for c in cols)
+    records: Dict[int, dict] = {}
+    done = 0
+    for c in cols:
+        def sub(d, t, m):
+            if progress:
+                progress(done + d, total, m)
+        for r in resolve_collection(c, max_age_hours, offline, progress=sub):
+            if r.get("norad_id") is not None:
+                records[r["norad_id"]] = r
+        done += collection_units(c)
+    return list(records.values())
+
+
+def _tle_derived_meta(line1: str, line2: str) -> dict:
+    """从 TLE 推算出可展示的倾角/高度（近似值），避免大星座逐个联网补档案。
+
+    倾角：TLE 第 2 行第 9~16 列（0 起 8:16）。
+    高度：平均运动 n（转/天）→ 周期 T（分）→ 半长轴 a（km），高度 ≈ a - 地球平均半径。
+    注意这是平均轨道的近似值，仅用于展示（标注"约"），覆盖计算仍用 SGP4 精算。
+    """
+    out = {"inclination": None, "altitude_km": None}
+    if not line2 or not line2.startswith("2 "):
+        return out
+    try:
+        out["inclination"] = float(line2[8:16])
+    except (ValueError, IndexError):
+        pass
+    try:
+        n = float(line2[52:63])   # 平均运动（转/天）
+        if n > 0:
+            period_min = 1440.0 / n
+            mu = 398600.4418      # 地球引力常数 km^3/s^2
+            a = (mu * (period_min * 60.0 / (2.0 * 3.141592653589793)) ** 2) ** (1.0 / 3.0)
+            out["altitude_km"] = round(a - 6371.0, 1)
+    except (ValueError, IndexError):
+        pass
+    return out
+
+
+def resolve_collection_with_meta(collection: dict,
+                                 max_age_hours: float = DEFAULT_MAX_AGE_HOURS,
+                                 offline: bool = False,
+                                 progress=None) -> List[dict]:
+    """解析收藏夹并补全元数据（所属/发射日期/高度/倾角），供 GUI 完整展示。
+
+    元数据来源：名字规则直接用已缓存的搜索档案表（records.php 缓存）；
+    缺失的星只读已缓存的 records.php?CATNR= 档案（meta/catnr_*.csv），
+    **不再主动联网逐个补**——批量请求会被 CelesTrak 拒绝（Q82 实测 403/10054）。
+    高度/倾角用 TLE 推导的近似值兜底，保证"能看到全部卫星"且秒开。
+    """
+    recs = resolve_collection(collection, max_age_hours, offline, progress=progress)
+    meta_map = {}
+    for e in collection.get("entries", []):
+        if e.get("type") == "name_filter":
+            meta_rows = search_metadata(e["value"], max_results=10000,
+                                        max_age_hours=max_age_hours, offline=offline)
+            if meta_rows:
+                for m in meta_rows:
+                    if m.get("norad_id") is not None:
+                        meta_map[m["norad_id"]] = m
+    # 星座分组等没有名字规则来源时：用组内星名的公共前缀拉一次档案缓存。
+    # offline=True 只读缓存，绝不联网逐个补档案（Q82/Q83：批量请求会被限流）。
+    if not meta_map and len(recs) >= 2:
+        names = [r.get("name", "") for r in recs if r.get("name")]
+        prefix = longest_common_prefix(names)
+        if len(prefix) >= 3:
+            meta_rows = search_metadata(prefix, max_results=10000,
+                                        max_age_hours=max_age_hours, offline=True)
+            if meta_rows:
+                for m in meta_rows:
+                    if m.get("norad_id") is not None:
+                        meta_map[m["norad_id"]] = m
+    out = []
+    for r in recs:
+        m = meta_map.get(r["norad_id"], {})
+        d = _tle_derived_meta(r.get("line1", ""), r.get("line2", ""))
+        out.append({
+            "name": r.get("name") or m.get("name", ""),
+            "norad_id": r["norad_id"],
+            "country": m.get("country", ""),
+            "launch_date": m.get("launch_date", ""),
+            "object_type": m.get("object_type", ""),
+            "altitude_km": m.get("altitude_km") if m.get("altitude_km") is not None
+                           else d["altitude_km"],
+            "inclination": m.get("inclination") if m.get("inclination") is not None
+                           else d["inclination"],
+            "meta_complete": bool(m),
+            "line1": r.get("line1"),
+            "line2": r.get("line2"),
+        })
+    return out
+
+
+def records_to_satellites(records: List[dict]) -> List[Satellite]:
+    """把 TLE 记录列表解析成 Satellite 包装对象列表。"""
+    ts = load.timescale(builtin=True)
+    sats = []
+    for r in records:
+        try:
+            orbit = EarthSatellite(r["line1"], r["line2"], r.get("name", ""), ts)
+            sats.append(Satellite(orbit, r.get("name", ""), r["norad_id"]))
+        except Exception as e:
+            print(f"  [警告] 解析失败 {r.get('name', r['norad_id'])}: {e}")
+    return sats
+
+
+def resolve_collections_to_satellites(collection_names: List[str],
+                                      max_age_hours: float = DEFAULT_MAX_AGE_HOURS,
+                                      offline: bool = False) -> List[Satellite]:
+    """选中多个收藏夹 -> 合并去重 -> 下载 TLE -> Satellite 包装对象。"""
+    return records_to_satellites(resolve_collections_to_records(
+        collection_names, max_age_hours, offline))
+
+
+def records_to_tle_text(records: List[dict]) -> str:
+    """把 TLE 记录拼成标准 3LE 文本（名字+两行，每 3 行一颗）。"""
+    lines = []
+    for r in records:
+        lines.append(r.get("name", ""))
+        lines.append(r.get("line1", ""))
+        lines.append(r.get("line2", ""))
+    return "\n".join(lines).rstrip("\n") + "\n"
+
+
+def save_resolved_tle(collection_name: str, records: List[dict]) -> Path:
+    """把解析结果合并写成一个文件（每个收藏夹一个 .tle，便于查看/复用）。"""
+    _ensure_dirs()
+    out_dir = CACHE_DIR / "resolved"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    safe = "".join(ch for ch in collection_name if ch.isalnum() or ch in "-_").strip() \
+        or "collection"
+    path = out_dir / f"{safe[:40]}.tle"
+    path.write_text(records_to_tle_text(records), encoding="ascii", errors="replace")
+    print(f"  [完成] 已保存合并 TLE（{len(records)} 颗）：{path}")
+    return path
+
+
+# ==================== 6. 展示辅助 ====================
+
+def _entry_label(entry: dict) -> str:
+    labels = {"name_filter": "名字规则", "norad_list": "编号清单",
+              "file": "导入文件", "celestrak_group": "星座分组"}
+    return f"{labels.get(entry['type'], entry['type'])} = {entry['value']}"
+
+
+def longest_common_prefix(names: List[str]) -> str:
+    """找一批卫星名的公共前缀（用于"手动清单 -> 自动规则"的归纳建议）。
+
+    例如 ["YAOGAN-2", "YAOGAN-35 01C", "YAOGAN-41"] -> "YAOGAN"。
+    大小写不敏感比较，返回时去掉末尾的 - _ . 等分隔符。
+    """
+    if not names:
+        return ""
+    prefix = names[0].strip()
+    for n in names[1:]:
+        n = n.strip()
+        i = 0
+        while i < len(prefix) and i < len(n) and prefix[i].upper() == n[i].upper():
+            i += 1
+        prefix = prefix[:i]
+        if not prefix:
+            return ""
+    return prefix.rstrip(" -_.")
+
+
+def _object_type_label(code: str) -> str:
+    """CelesTrak 编目的短代码 -> 中文（便于阅读）。"""
+    return {"PAY": "载荷", "R/B": "火箭体", "DEB": "碎片", "UNK": "未知"}.get(code, code)
+
+
+def print_collections(collections: List[dict]):
+    if not collections:
+        print("  （暂无收藏夹）")
+        return
+    for i, c in enumerate(collections, 1):
+        tag = "（内置，只读）" if c.get("builtin") else ""
+        desc = f" —— {c['description']}" if c.get("description") else ""
+        print(f"  {i}. {c['name']}{tag}{desc}（{len(c['entries'])} 条）")
+
+
+def print_search_results(rows: List[dict], start: int = 0):
+    for i, r in enumerate(rows, start + 1):
+        alt = f"{r['altitude_km']:.0f} km" if r.get("altitude_km") is not None else "?"
+        inc = f"{r['inclination']:.1f}°" if r.get("inclination") is not None else "?"
+        country = r.get("country") or "?"
+        launch = (r.get("launch_date") or "?")[:10]
+        decay = "（已再入）" if r.get("decayed") else ""
+        print(f"  {i}. {r['name']}  NORAD:{r['norad_id']}  {country}  {launch}  "
+              f"高度≈{alt} 倾角≈{inc}  {_object_type_label(r.get('object_type', ''))}{decay}")
+
+
+def _ask_number(prompt: str, lo: int, hi: int, default: Optional[int] = None) -> Optional[int]:
+    while True:
+        s = input(prompt).strip()
+        if not s and default is not None:
+            return default
+        try:
+            n = int(s)
+            if lo <= n <= hi:
+                return n
+        except ValueError:
+            pass
+        print(f"  请输入 {lo}~{hi} 之间的数字。")
+
+
+def _ask_text(prompt: str, allow_empty: bool = False) -> Optional[str]:
+    s = input(prompt).strip()
+    if not s and not allow_empty:
+        print("  输入不能为空。")
+        return None
+    return s
+
+
+def _pick_collection(collections: List[dict], title: str) -> Optional[dict]:
+    """让用户从列表里挑一个收藏夹。"""
+    print(f"\n{title}")
+    print_collections(collections)
+    if not collections:
+        return None
+    n = _ask_number(f"  请选择（1~{len(collections)}，0=返回）> ", 0, len(collections))
+    if n is None or n == 0:
+        return None
+    return collections[n - 1]
+
+
+def _select_or_create_collection() -> Optional[str]:
+    """搜索/导入后，选择要存入的用户收藏夹（或新建）。"""
+    user = load_user_collections()
+    print("\n选择要存入的用户收藏夹：")
+    print_collections(user)
+    print("  0. 返回")
+    print("  n. 新建收藏夹（输入 n 加名称，如：n 我的遥感）")
+    while True:
+        s = input("> ").strip()
+        if s == "0":
+            return None
+        if s.lower().startswith("n "):
+            name = s[2:].strip()
+            if name and create_collection(name):
+                return name
+            continue
+        if s.isdigit():
+            n = int(s)
+            if 1 <= n <= len(user):
+                return user[n - 1]["name"]
+        print("  输入无效，重试。")
+
+
+# ==================== 7. 交互菜单 ====================
+
+def _menu_search():
+    print("\n===== 搜索卫星 =====")
+    keyword = _ask_text("  输入名字关键字（如 YAOGAN / GF-1，留空返回）> ", allow_empty=True)
+    if not keyword:
+        return
+    print("  正在搜索编目（首次会自动下载并缓存）……")
+    rows = search_metadata(keyword=keyword, max_results=300, offline=False)
+    if rows is None:
+        print("  [失败] 数据下载失败（可能被数据源限流/禁止），请稍后重试。")
+        return
+    if not rows:
+        print(f"  [结果] 没有找到名字含「{keyword}」的卫星。")
+        return
+    print(f"  [结果] 共 {len(rows)} 条（显示前 {min(20, len(rows))} 条）：")
+    show = rows[:20]
+    print_search_results(show)
+
+    print("\n  如何保存？（输入编号如 1,3-5 / 0=取消；只存编号清单快照）")
+    s = input("> ").strip().lower()
+    if s == "0":
+        return
+    collection = _select_or_create_collection()
+    if collection is None:
+        return
+    # 解析 "1,3-5,8" 这类选择，转成 NORAD 编号清单（固定快照）
+    idx = set()
+    for part in s.split(","):
+        part = part.strip()
+        if "-" in part:
+            a, b = part.split("-", 1)
+            if a.isdigit() and b.isdigit():
+                idx.update(range(max(1, int(a)), min(len(rows), int(b)) + 1))
+        elif part.isdigit():
+            n = int(part)
+            if 1 <= n <= len(rows):
+                idx.add(n)
+    ids = [str(rows[i - 1]["norad_id"]) for i in sorted(idx)
+           if rows[i - 1].get("norad_id") is not None]
+    if not ids:
+        print("  [失败] 没有选中任何有效的卫星编号。")
+        return
+    add_entry(collection, "norad_list", " ".join(ids))
+
+
+def _menu_manage():
+    while True:
+        all_c = load_all_collections()
+        print("\n===== 收藏夹管理 =====")
+        print_collections(all_c)
+        print("  1. 新建收藏夹")
+        print("  2. 打开收藏夹（查看/加/删/移动条目）")
+        print("  3. 改名 / 删除（用户收藏夹）")
+        print("  0. 返回")
+        choice = _ask_number("> ", 0, 3)
+        if choice is None or choice == 0:
+            return
+        if choice == 1:
+            name = _ask_text("  新收藏夹名称（如：中国遥感）> ")
+            if name:
+                create_collection(name)
+        elif choice == 2:
+            c = _pick_collection(all_c, "选择要打开的收藏夹")
+            if c is None:
+                continue
+            _menu_open_collection(c)
+        elif choice == 3:
+            user = load_user_collections()
+            c = _pick_collection(user, "选择用户收藏夹（改名/删除）")
+            if c is None:
+                continue
+            print(f"  当前：{c['name']}")
+            print("  1. 改名")
+            print("  2. 删除（会提示确认）")
+            print("  0. 返回")
+            op = _ask_number("> ", 0, 2)
+            if op == 1:
+                new = _ask_text("  新名称 > ")
+                if new:
+                    rename_collection(c["name"], new)
+            elif op == 2:
+                confirm = input(f"  确认删除收藏夹「{c['name']}」？此操作不可撤销（y/N）> ").strip().lower()
+                if confirm == "y":
+                    delete_collection(c["name"])
+
+
+def _menu_open_collection(c: dict):
+    while True:
+        print(f"\n===== 收藏夹：{c['name']} =====")
+        if c.get("description"):
+            print(f"  备注：{c['description']}")
+        if not c["entries"]:
+            print("  （空收藏夹）")
+        for i, e in enumerate(c["entries"], 1):
+            print(f"  {i}. {_entry_label(e)}")
+        print("  1. 添加条目（编号清单 / 文件）")
+        print("  2. 移除条目")
+        print("  3. 移动条目到另一个收藏夹")
+        print("  4. 解析本夹（下载 TLE 并统计数量）")
+        print("  0. 返回")
+        choice = _ask_number("> ", 0, 4)
+        if choice is None or choice == 0:
+            return
+        if choice == 1:
+            if c.get("builtin"):
+                print("  内置夹只读，请先复制到我的收藏再修改。")
+                continue
+            print("  条目类型：1=编号清单  2=导入文件")
+            t = _ask_number("> ", 1, 2)
+            if t == 1:
+                v = _ask_text("  编号清单（空格或逗号分隔，如 25544 28699）> ")
+                if v:
+                    add_entry(c["name"], "norad_list", v)
+            else:
+                p = _ask_text("  文件路径（TLE 或编号清单 .txt）> ")
+                if p:
+                    import_file_to_collection(p, c["name"])
+        elif choice == 2:
+            if c.get("builtin"):
+                print("  内置夹只读，请先复制到我的收藏再修改。")
+                continue
+            n = _ask_number(f"  输入要移除的条目序号（1~{len(c['entries'])}）> ",
+                            1, max(1, len(c["entries"])))
+            if n:
+                remove_entry(c["name"], n - 1)
+        elif choice == 3:
+            if c.get("builtin"):
+                print("  内置夹只读，无法移动其中的条目。")
+                continue
+            n = _ask_number(f"  输入要移动的条目序号（1~{len(c['entries'])}）> ",
+                            1, max(1, len(c["entries"])))
+            if not n:
+                continue
+            user = [x for x in load_user_collections() if x["name"] != c["name"]]
+            dst = _pick_collection(user, "移动到哪个收藏夹")
+            if dst:
+                move_entry(c["name"], n - 1, dst["name"])
+        elif choice == 4:
+            recs = resolve_collection(c, offline=False)
+            print(f"  [结果] 解析到 {len(recs)} 颗卫星（按 NORAD 编号去重）。")
+
+
+def _menu_resolve():
+    all_c = load_all_collections()
+    c = _pick_collection(all_c, "选择要解析（下载 TLE）的收藏夹")
+    if c is None:
+        return
+    recs = resolve_collection(c, offline=False)
+    print(f"  [结果] 「{c['name']}」解析到 {len(recs)} 颗卫星。")
+    if recs:
+        print("  前 10 颗：")
+        for r in recs[:10]:
+            print(f"    {r['name']}  NORAD:{r['norad_id']}")
+
+
+def _menu_import():
+    print("\n===== 导入本地文件 =====")
+    p = _ask_text("  文件路径（TLE 或 NORAD 编号清单）> ")
+    if not p:
+        return
+    collection = _select_or_create_collection()
+    if collection is None:
+        return
+    import_file_to_collection(p, collection)
+
+
+def interactive_main():
+    """命令行交互主菜单（以后 GUI 只需替换这一层）。"""
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")  # Windows 终端中文不乱码
+    except Exception:
+        pass
+    print("=" * 56)
+    print("卫星数据加载器（阶段 1）—— 搜索 / 收藏夹 / 下载")
+    print("=" * 56)
+    while True:
+        print("\n主菜单：")
+        print("  1. 搜索卫星并入收藏")
+        print("  2. 查看 / 管理收藏夹")
+        print("  3. 解析收藏夹（下载 TLE）")
+        print("  4. 导入本地文件（TLE / 编号清单）")
+        print("  0. 退出")
+        choice = _ask_number("> ", 0, 4)
+        if choice is None:
+            continue
+        if choice == 0:
+            print("再见。")
+            return
+        if choice == 1:
+            _menu_search()
+        elif choice == 2:
+            _menu_manage()
+        elif choice == 3:
+            _menu_resolve()
+        elif choice == 4:
+            _menu_import()
+
+
+# ==================== 8. 命令行入口 ====================
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="卫星数据加载器：搜索 / 收藏夹 / 下载缓存 / 星座导入 / 常用地点 / 传感器参数"
+                    "（GUI 五个页面的 CLI 版）")
+    parser.add_argument("--search", metavar="关键字",
+                        help="按名字关键字搜索并打印结果（含变体重查与拼写提示；"
+                             "可配合 --country/--launch-year/--min-alt/--max-alt 筛选）")
+    parser.add_argument("--norad", type=int, help="按 NORAD 编号查询单星")
+    parser.add_argument("--catalog", action="store_true", help="列出所有收藏夹（内置+用户）")
+    parser.add_argument("--create", metavar="名称", help="新建用户收藏夹")
+    parser.add_argument("--rename", nargs=2, metavar=("旧名", "新名"), help="改用户收藏夹名")
+    parser.add_argument("--delete", metavar="名称", help="删除用户收藏夹")
+    parser.add_argument("--import-file", metavar="路径",
+                        help="导入 TLE/编号文件（配合 --collection；不给 --collection 则自动建夹）")
+    parser.add_argument("--collection", metavar="名称",
+                        help="配合 --import-file / --constellation / --add-entry 指定目标收藏夹")
+    parser.add_argument("--add-entry", metavar="类型", choices=["norad_list"],
+                        help="往 --collection 加编号清单条目（配合 --value）")
+    parser.add_argument("--value", metavar="值", help="配合 --add-entry 的条目值")
+    parser.add_argument("--resolve", metavar="名称", help="解析收藏夹并打印卫星数量")
+    parser.add_argument("--offline", action="store_true", help="离线模式：只用缓存，不联网")
+    parser.add_argument("--force-update", nargs="*", metavar="收藏夹",
+                        help="强制重新下载全集与选中收藏夹的星座分组缓存（编号清单随全集同步）")
+    parser.add_argument("--selfcheck", action="store_true",
+                        help="运行自检（等价 GUI ④页“运行自检”，联网部分需要网络）")
+    parser.add_argument("--country", metavar="代码", help="配合 --search：按所属国筛选（如 PRC）")
+    parser.add_argument("--launch-year", metavar="年份", help="配合 --search：按发射年份筛选")
+    parser.add_argument("--min-alt", type=float, help="配合 --search：最低高度 km")
+    parser.add_argument("--max-alt", type=float, help="配合 --search：最高高度 km")
+    parser.add_argument("--constellation", metavar="名称",
+                        help="预览星座成员；配合 --collection 导入为编号快照（星座收藏夹）")
+    parser.add_argument("--remove-norad", nargs="+", metavar=("夹名", "NORAD"),
+                        help="从夹的编号清单里删星：--remove-norad 夹名 25544 31490")
+    parser.add_argument("--copy", nargs=2, metavar=("源夹", "目标夹"),
+                        help="把源夹全部条目复制到目标夹（重复跳过）")
+    parser.add_argument("--move-entry", nargs=3, metavar=("源夹", "条目序号(1起)", "目标夹"),
+                        help="把源夹第 N 条移到目标夹")
+    parser.add_argument("--list-locations", action="store_true", help="列出内置+用户常用地点")
+    parser.add_argument("--save-location", nargs=4, metavar=("名称", "纬度", "经度", "半径km"),
+                        help="保存/更新用户常用地点")
+    parser.add_argument("--delete-location", metavar="名称", help="删除用户常用地点")
+    parser.add_argument("--sensor-list", action="store_true",
+                        help="列出逐星传感器参数表与幅宽开关")
+    parser.add_argument("--sensor-set", metavar="NORAD",
+                        help="设置/更新一颗星的传感器参数（配合 --fov/--elev/--swath，至少填一个）")
+    parser.add_argument("--sensor-del", metavar="NORAD", help="删除一颗星的传感器参数行")
+    parser.add_argument("--sensor-clear", action="store_true",
+                        help="清空传感器参数表并关闭幅宽开关")
+    parser.add_argument("--fov", type=float,
+                        help="配合 --sensor-set：视场半角（度，留空=全局默认）")
+    parser.add_argument("--elev", type=float,
+                        help="配合 --sensor-set：最小仰角（度，留空=全局默认）")
+    parser.add_argument("--swath", type=float,
+                        help="配合 --sensor-set：幅宽（km，留空=不用幅宽）")
+    parser.add_argument("--swath-enable", action="store_true", help="开启幅宽（逐星）生效开关")
+    parser.add_argument("--swath-disable", action="store_true", help="关闭幅宽（逐星）生效开关")
+    args = parser.parse_args(argv)
+
+    if args.search:
+        kw = args.search
+        print(f"在线搜索：{kw}")
+        rows = search_metadata(kw, country=args.country, launch_year=args.launch_year,
+                               min_alt_km=args.min_alt, max_alt_km=args.max_alt,
+                               offline=args.offline)
+        note = ""
+        if rows is None:
+            note = "数据下载失败（可能被数据源限流），请稍后重试。"
+            rows = []
+        elif not rows:
+            # 变体重查：连字符 <-> 空格（与 GUI ①页一致）
+            variant = kw.replace("-", " ").strip()
+            if variant and variant != kw:
+                rows_v = search_metadata(variant, country=args.country,
+                                         launch_year=args.launch_year,
+                                         min_alt_km=args.min_alt, max_alt_km=args.max_alt,
+                                         offline=args.offline)
+                if rows_v:
+                    note = f"原名「{kw}」未找到，已按变体「{variant}」查到 {len(rows_v)} 条。"
+                    rows = rows_v
+            if not rows:
+                sug = suggest_similar_names(kw, n=3, offline=True)
+                if sug:
+                    note = f"「{kw}」未找到。你是不是想找：{'、'.join(sug)}？"
+        if note:
+            print(note)
+        print(f"找到 {len(rows)} 条：")
+        if rows:
+            print_search_results(rows[:100])
+            if len(rows) > 100:
+                print(f"  ……仅显示前 100 条，共 {len(rows)} 条")
+        elif not note:
+            print("  没有找到匹配的卫星，换个关键字试试。")
+    if args.norad:
+        print(f"按 NORAD 编号查询：{args.norad}")
+        rows = search_metadata_by_norad(args.norad, offline=args.offline)
+        if rows is None:
+            print("  数据下载失败（可能被数据源限流），请稍后重试。")
+        elif not rows:
+            print("  查不到该编号（可能已退役/保密/新发射）。")
+        else:
+            print(f"找到 {len(rows)} 条：")
+            print_search_results(rows)
+    if args.catalog:
+        print("收藏夹列表：")
+        print_collections(load_all_collections())
+    if args.create:
+        create_collection(args.create)
+    if args.rename:
+        rename_collection(args.rename[0], args.rename[1])
+    if args.delete:
+        delete_collection(args.delete)
+    if args.import_file:
+        col = args.collection or "导入文件"
+        import_file_to_collection(args.import_file, col, new_collection=not args.collection)
+    if args.add_entry:
+        if not args.collection or not args.value:
+            print("--add-entry 需要配合 --collection 和 --value。")
+        else:
+            add_entry(args.collection, args.add_entry, args.value)
+    if args.constellation:
+        cons = load_constellations()
+        c = next((x for x in cons if x["name"] == args.constellation), None)
+        if c is None:
+            print(f"未找到星座：{args.constellation}")
+            print("可用星座：" + "、".join(x["name"] for x in cons) or "（星座目录为空）")
+        else:
+            src = c["source"]
+            recs = resolve_collection(
+                {"entries": [{"type": src["type"], "value": src["value"]}]},
+                offline=args.offline)
+            seen: dict = {}
+            for r in recs:
+                seen.setdefault(r.get("norad_id"), r)
+            recs = list(seen.values())
+            print(f"「{c['name']}」解析到 {len(recs)} 颗卫星（按 NORAD 去重）。")
+            if args.collection:
+                col = args.collection
+                cur = find_collection(load_user_collections(), col)
+                if cur is None:
+                    create_collection(col, description=c.get("description", ""),
+                                      kind="constellation")
+                    cur = find_collection(load_user_collections(), col)
+                if cur is None:
+                    print("  [失败] 收藏夹创建失败，请重试。")
+                else:
+                    for idx in reversed([i for i, e in enumerate(cur["entries"])
+                                         if e["type"] == "norad_list"]):
+                        remove_entry(col, idx)
+                    ids = sorted({int(r["norad_id"]) for r in recs
+                                  if r.get("norad_id") is not None})
+                    if ids:
+                        add_entry(col, "norad_list", " ".join(map(str, ids)))
+                    print(f"  [完成] 已把「{c['name']}」的 {len(ids)} 颗星存为编号快照"
+                          f"（星座收藏夹「{col}」）")
+            else:
+                for r in recs[:50]:
+                    print(f"    {r['name']}  NORAD:{r['norad_id']}")
+                if len(recs) > 50:
+                    print(f"    ……共 {len(recs)} 颗（如需导入请加 --collection 收藏夹名）")
+    if args.remove_norad:
+        col = args.remove_norad[0]
+        for sid in args.remove_norad[1:]:
+            if not sid.isdigit():
+                print(f"  [失败] NORAD 需为纯数字：{sid}")
+            else:
+                remove_norad_from_collection(col, int(sid))
+    if args.copy:
+        src_name, dst_name = args.copy
+        src = find_collection(load_all_collections(), src_name)
+        dst = find_collection(load_user_collections(), dst_name)
+        if src is None:
+            print(f"  [失败] 未找到源收藏夹：{src_name}")
+        elif dst is None:
+            print(f"  [失败] 未找到目标用户收藏夹：{dst_name}")
+        else:
+            copied = sum(1 for e in src["entries"]
+                         if add_entry(dst_name, e["type"], e["value"]))
+            print(f"  [完成] 已复制 {copied} 条到「{dst_name}」（重复跳过）")
+    if args.move_entry:
+        src_name, idx_s, dst_name = args.move_entry
+        if not idx_s.isdigit():
+            print("  [失败] 条目序号需为数字（1 起）。")
+        else:
+            src = find_collection(load_user_collections(), src_name)
+            if src:
+                print(f"「{src_name}」现有条目：")
+                for i, e in enumerate(src["entries"], 1):
+                    print(f"  {i}. {_entry_label(e)}")
+            move_entry(src_name, int(idx_s) - 1, dst_name)
+    if args.resolve:
+        all_c = load_all_collections()
+        c = find_collection(all_c, args.resolve)
+        if c is None:
+            print(f"找不到收藏夹：{args.resolve}")
+        else:
+            recs = resolve_collection(c, offline=args.offline)
+            print(f"「{args.resolve}」解析到 {len(recs)} 颗卫星。")
+            for r in recs[:10]:
+                print(f"  {r['name']}  NORAD:{r['norad_id']}")
+            if recs:
+                save_resolved_tle(args.resolve, recs)
+    if args.force_update is not None:
+        n_req = force_refresh_collections(list(args.force_update))
+        print(f"强制更新完成：本次请求 {n_req} 次（全集 + 选中星座分组），"
+              f"编号清单已随全集同步。")
+    if args.list_locations:
+        locs = load_locations()
+        if not locs:
+            print("  （暂无常用地点）")
+        for x in locs:
+            src_tag = "内置" if x.get("source") == "builtin" else "用户"
+            print(f"  {x['name']}（{src_tag}）({x['lat']:.4f}, {x['lon']:.4f}) "
+                  f"半径{x.get('radius_km', 5.0)}km")
+    if args.save_location:
+        name, lat, lon, rad = args.save_location
+        save_user_location(name, float(lat), float(lon), float(rad))
+        print(f"  [完成] 已保存常用地点：{name} ({lat}, {lon}) 半径{rad}km")
+    if args.delete_location:
+        ok = delete_user_location(args.delete_location)
+        print(f"  [完成] 已删除用户地点：{args.delete_location}" if ok
+              else f"  [失败] 未找到用户地点：{args.delete_location}")
+    if args.sensor_list:
+        rows = load_sensor_params()
+        sw = load_sensor_swath_enabled()
+        print(f"幅宽（逐星）生效开关：{'开启' if sw else '关闭'}")
+        if not rows:
+            print("  （空表：全部卫星用全局默认 10°/10°）")
+        for r in rows:
+            fov = (f"{r['fov_half_angle_deg']:g}°"
+                   if r["fov_half_angle_deg"] is not None else "默认")
+            elev = (f"{r['min_elevation_deg']:g}°"
+                    if r["min_elevation_deg"] is not None else "默认")
+            swath = (f"{r['swath_km']:g}km"
+                     if r["swath_km"] is not None else "—")
+            print(f"  NORAD {r['norad']}：视场半角={fov} 最小仰角={elev} 幅宽={swath}")
+    if args.sensor_set:
+        try:
+            norad = int(args.sensor_set)
+        except ValueError:
+            print(f"  [失败] NORAD 需为纯数字：{args.sensor_set}")
+            norad = None
+        if norad is not None and (args.fov is None and args.elev is None
+                                  and args.swath is None):
+            print("  [失败] --sensor-set 需要至少填一个参数（--fov/--elev/--swath）。")
+        elif norad is not None:
+            ensure_sensor_params()
+            rows = [r for r in load_sensor_params() if r["norad"] != norad]
+            rows.append({"norad": norad,
+                         "fov_half_angle_deg": args.fov,
+                         "min_elevation_deg": args.elev,
+                         "swath_km": args.swath})
+            sw = load_sensor_swath_enabled()
+            save_sensor_params(rows, swath_enabled=sw)
+            print(f"  [完成] 已写入传感器参数表：NORAD {norad} "
+                  f"fov={args.fov} elev={args.elev} swath={args.swath}")
+    if args.sensor_del:
+        try:
+            norad = int(args.sensor_del)
+        except ValueError:
+            norad = None
+        if norad is None:
+            print(f"  [失败] NORAD 需为纯数字：{args.sensor_del}")
+        else:
+            rows = [r for r in load_sensor_params() if r["norad"] != norad]
+            sw = load_sensor_swath_enabled()
+            save_sensor_params(rows, swath_enabled=sw)
+            print(f"  [完成] 已删除传感器参数行：NORAD {norad}")
+    if args.sensor_clear:
+        save_sensor_params([], swath_enabled=False)
+        print("  [完成] 已清空传感器参数表并关闭幅宽开关。")
+    if args.swath_enable:
+        save_sensor_params(load_sensor_params(), swath_enabled=True)
+        print("  [完成] 幅宽（逐星）生效开关：开启。")
+    if args.swath_disable:
+        save_sensor_params(load_sensor_params(), swath_enabled=False)
+        print("  [完成] 幅宽（逐星）生效开关：关闭。")
+    if args.selfcheck:
+        import validate_loader
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+        results = validate_loader.run_all()
+        ok_n = sum(1 for _, ok, _ in results if ok)
+        print(f"自检结果：{ok_n} / {len(results)} 通过")
+        for name, ok, detail in results:
+            if not ok:
+                print(f"  [失败] {name}　{detail}")
+        return 0 if ok_n == len(results) else 1
+
+    # 没有任何参数时进入交互模式
+    if not any([args.search, args.norad, args.catalog, args.create, args.rename,
+                args.delete, args.import_file, args.add_entry,
+                args.resolve, args.constellation, args.remove_norad, args.copy,
+                args.move_entry, args.list_locations, args.save_location,
+                args.delete_location, args.sensor_list, args.sensor_set,
+                args.sensor_del, args.sensor_clear, args.swath_enable,
+                args.swath_disable, args.selfcheck,
+                args.force_update is not None]):
+        interactive_main()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
