@@ -140,6 +140,10 @@ class PlanCreate(BaseModel):
         area_target = self.area_target_pct
         if area_target is None:
             area_target = 90.0
+        fallback_area_target = self.fallback_area_target_pct
+        if fallback_area_target is None:
+            # 旧引擎默认 fallback=90；严格目标低于 90 时会把 fallback 顶到严格目标之上。
+            fallback_area_target = min(90.0, float(area_target))
         return PlanSpec(
             operation=self.operation,
             aoi_code=self.aoi_code,
@@ -159,7 +163,7 @@ class PlanCreate(BaseModel):
             mrt_target_minutes=self.mrt_target_minutes,
             n_budget=self.n_budget,
             area_target_pct=area_target,
-            fallback_area_target_pct=self.fallback_area_target_pct,
+            fallback_area_target_pct=fallback_area_target,
             allow_area_fallback=self.allow_area_fallback,
             exact_budget=self.exact_budget,
             max_windows=self.max_windows,

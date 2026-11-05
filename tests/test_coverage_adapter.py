@@ -206,6 +206,8 @@ def test_plan_create_requires_aoi_and_task_fields() -> None:
         PlanCreate(operation="task1", area_target_pct=90)
     model = PlanCreate(operation="task1", aoi_code="330100", area_target_pct=90)
     assert model.to_spec().temporal_coverage_target_pct == 0.001
+    model = PlanCreate(operation="task1", aoi_code="330100", area_target_pct=80)
+    assert model.to_spec().fallback_area_target_pct == 80.0
     model = PlanCreate(
         operation="task1",
         aoi_wkt="POLYGON ((120 30, 121 30, 121 31, 120 30))",
