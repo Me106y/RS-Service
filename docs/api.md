@@ -2,6 +2,8 @@
 
 只绑 `127.0.0.1`。浏览器经 `SIRIAgent` 反代访问 REST；DSH Agent 通过 MCP 调用。
 
+> 卫星成图的计算过程、指标定义、P0/P1/P2 规则见 [IMAGING-PLAN.md](IMAGING-PLAN.md)。
+
 ## REST `/api/v1`
 
 | 方法 | 路径 | 说明 |

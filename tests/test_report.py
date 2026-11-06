@@ -83,7 +83,7 @@ def fake_result() -> dict:
 
 def test_render_report_contains_four_sections() -> None:
     html = render_report(fake_result())
-    for text in ["卫星构成", "覆盖与回放", "推荐计划", "口径与精度", "杭州市", "GF-1"]:
+    for text in ["卫星构成", "覆盖与回放", "过境窗口", "口径与精度", "杭州市", "GF-1"]:
         assert text in html
     assert "MAP_DATA" not in html
     assert "目标 90%" in html

@@ -38,11 +38,14 @@ from rs_service.db.models import Aoi, Satellite, Sensor, TleCurrent, TleRecord
 from rs_service.db.session import session_scope
 
 from ..astro import cloud
+from ..astro.solar import sun_altitude_deg
 
 # 触发 vendor 的 sys.path 注入，必须在导入 siriagent_skill 之前。
 from . import VENDOR_DIR  # noqa: F401
 
 ALONG_TRACK_HALF_ANGLE_DEG = 60.0
+MIN_ELEVATION_DEG = 10.0
+MIN_SUN_ALTITUDE_DEG = 10.0
 _UI_SENSOR_TO_CLASS = {
     "optical": "可见光",
     "hyperspectral": "高光谱",
@@ -294,7 +297,7 @@ def _payload(
             "sensor_type": "Rectangular",
             "swath_km": item.swath_km,
             "along_track_half_angle_deg": ALONG_TRACK_HALF_ANGLE_DEG,
-            "min_elevation_deg": 0.0,
+            "min_elevation_deg": MIN_ELEVATION_DEG,
         }
         if spec.pointing == "targeted":
             override["pointing"] = {"type": "Targeted"}
@@ -340,30 +343,39 @@ def _payload(
 
 def _filter_windows(
     windows: dict[tuple[int, int], tuple[Any, ...]],
-    series: list[tuple[datetime, float]],
+    samples: list[tuple[float, float, list[tuple[datetime, float]]]],
+    cells: list[Any],
     threshold_pct: float,
 ) -> tuple[dict[tuple[int, int], tuple[Any, ...]], int]:
-    """按窗口中点云量剔除访问；同一 10 分钟桶只插值一次。"""
+    """按窗口中点云量剔除访问；AOI 内多点采样，窗口取最近采样点。"""
 
     kept: dict[tuple[int, int], tuple[Any, ...]] = {}
     dropped = 0
-    cache: dict[datetime, float | None] = {}
-    for key, items in windows.items():
+    cache: dict[tuple[int, datetime], float | None] = {}
+    for (sat_index, grid_index), items in windows.items():
+        cell = cells[grid_index]
+        sample_index = min(
+            range(len(samples)),
+            key=lambda index: (samples[index][0] - cell.representative_lat) ** 2
+            + (samples[index][1] - cell.representative_lon) ** 2,
+        )
+        series = samples[sample_index][2]
         keep = []
         for window in items:
             middle = window.start_utc + (window.end_utc - window.start_utc) / 2
             bucket = middle.replace(
                 minute=(middle.minute // 10) * 10, second=0, microsecond=0
             )
-            if bucket not in cache:
-                cache[bucket] = cloud.cloud_at(series, middle)
-            value = cache[bucket]
+            key = (sample_index, bucket)
+            if key not in cache:
+                cache[key] = cloud.cloud_at(series, middle)
+            value = cache[key]
             if value is not None and value > threshold_pct:
                 dropped += 1
                 continue
             keep.append(window)
         if keep:
-            kept[key] = tuple(keep)
+            kept[(sat_index, grid_index)] = tuple(keep)
     return kept, dropped
 
 
@@ -374,26 +386,94 @@ def _apply_cloud(
     lon: float,
     stats: dict[str, Any],
 ) -> Any:
-    series = cloud.series_for(lat, lon, spec.start_utc, max(1, int(spec.horizon_h) + 1))
-    if not series:
+    cells = list(store.grid.cells)
+    if not cells:
+        stats.update(filtered=False, reason="没有网格，无法过滤云量")
+        return store
+    lats = [cell.representative_lat for cell in cells]
+    lons = [cell.representative_lon for cell in cells]
+    lat_axis = [min(lats), (min(lats) + max(lats)) / 2, max(lats)]
+    lon_axis = [min(lons), (min(lons) + max(lons)) / 2, max(lons)]
+    samples: list[tuple[float, float, list[tuple[datetime, float]]]] = []
+    for sample_lat in lat_axis:
+        for sample_lon in lon_axis:
+            series = cloud.series_for(
+                sample_lat,
+                sample_lon,
+                spec.start_utc,
+                max(1, int(spec.horizon_h) + 1),
+            )
+            if series:
+                samples.append((sample_lat, sample_lon, series))
+    if not samples:
         stats.update(
             filtered=False,
             reason="Open-Meteo 不可用，本次未过滤云量",
         )
         return store
-    kept, dropped = _filter_windows(store.windows, series, spec.cloud_threshold_pct)
+    kept, dropped = _filter_windows(
+        store.windows, samples, cells, spec.cloud_threshold_pct
+    )
     filtered = copy.copy(store)
     filtered.windows = kept
     filtered.metadata = dict(store.metadata)
     filtered.metadata["cloud"] = {
         "threshold_pct": spec.cloud_threshold_pct,
         "dropped_windows": dropped,
+        "samples": len(samples),
     }
     stats.update(
         filtered=True,
         threshold_pct=spec.cloud_threshold_pct,
         dropped_windows=dropped,
+        samples=len(samples),
         reason=None,
+    )
+    return filtered
+
+
+def _apply_sun(
+    store: Any,
+    candidates: list[Candidate],
+    stats: dict[str, Any],
+) -> Any:
+    """光学/高光谱按窗口中点、网格代表点的太阳高度过滤；SAR 不适用。"""
+
+    profiles = {item.norad_id: item.sensor_class for item in candidates}
+    windows: dict[tuple[int, int], tuple[Any, ...]] = {}
+    dropped = 0
+    checked = 0
+    for (sat_index, grid_index), items in store.windows.items():
+        sat = store.satellites[sat_index]
+        if profiles.get(int(sat.norad_id)) not in {"可见光", "高光谱"}:
+            windows[(sat_index, grid_index)] = tuple(items)
+            continue
+        cell = store.grid.cells[grid_index]
+        keep = []
+        for window in items:
+            middle = window.start_utc + (window.end_utc - window.start_utc) / 2
+            altitude = sun_altitude_deg(
+                middle, cell.representative_lat, cell.representative_lon
+            )
+            checked += 1
+            if altitude <= MIN_SUN_ALTITUDE_DEG:
+                dropped += 1
+                continue
+            keep.append(window)
+        if keep:
+            windows[(sat_index, grid_index)] = tuple(keep)
+    filtered = copy.copy(store)
+    filtered.windows = windows
+    filtered.metadata = dict(store.metadata)
+    filtered.metadata["sun"] = {
+        "min_altitude_deg": MIN_SUN_ALTITUDE_DEG,
+        "dropped_windows": dropped,
+        "checked_windows": checked,
+    }
+    stats.update(
+        min_altitude_deg=MIN_SUN_ALTITUDE_DEG,
+        dropped_windows=dropped,
+        checked_windows=checked,
     )
     return filtered
 
@@ -478,6 +558,17 @@ def _attach_report_data(
     selected_ids = [int(item) for item in selection.get("selected_sat_ids") or []]
     profiles = {item.norad_id: item for item in candidates}
     table = {int(item["norad_id"]): item for item in result.get("satellite_table") or []}
+    for row in table.values():
+        profile = profiles.get(int(row.get("norad_id")))
+        if profile is not None:
+            row["sensor_class"] = profile.sensor_class
+            row["resolution_m"] = profile.resolution_m
+            row["swath_km"] = profile.swath_km
+    max_by_sat = {
+        int(item["norad_id"]): float(item.get("maximum_covered_area_pct") or 0.0)
+        for item in result.get("city_pass_window_table") or []
+        if item.get("norad_id") is not None
+    }
     sats = []
     for position, norad in enumerate(selected_ids):
         row = table.get(norad, {})
@@ -492,9 +583,19 @@ def _attach_report_data(
                 "passes": row.get("city_pass_count"),
                 "cumulative_minutes": row.get("cumulative_city_intersection_minutes"),
                 "first_window": row.get("first_window_utc"),
+                "max_covered_area_pct": max_by_sat.get(norad, 0.0),
                 "rank": position + 1,
             }
         )
+    sats.sort(
+        key=lambda item: (
+            item.get("max_covered_area_pct") or 0.0,
+            item.get("cumulative_minutes") or 0.0,
+        ),
+        reverse=True,
+    )
+    for rank, item in enumerate(sats, 1):
+        item["rank"] = rank
     start = datetime.fromisoformat(
         result["input_summary"]["start_utc"].replace("Z", "+00:00")
     )
@@ -513,6 +614,7 @@ def _annotate_result(
     blocked: list[dict[str, Any]],
     cloud_stats: dict[str, Any],
     tle_info: dict[str, Any],
+    sun_stats: dict[str, Any],
 ) -> dict[str, Any]:
     recommended = (result.get("selection") or {}).get("recommended_result") or {}
     result["targets"] = {
@@ -521,6 +623,7 @@ def _annotate_result(
         "mrt_minutes": recommended.get("mrt_target_minutes"),
     }
     result["tle"] = tle_info
+    result["sun"] = sun_stats
     result["blocked_satellites"] = blocked
     result["candidate_count"] = len(candidates)
     result["blocked_count"] = len(blocked)
@@ -533,11 +636,19 @@ def _annotate_result(
     if cloud_stats.get("filtered"):
         assumptions.append(
             "云量按 Open-Meteo 逐小时 cloud_cover >"
-            f"{cloud_stats.get('threshold_pct')}% 剔除访问；云量为网格预报值，"
+            f"{cloud_stats.get('threshold_pct')}% 剔除访问；"
+            f"AOI 内 {cloud_stats.get('samples', 1)} 个采样点取最近点，云量为预报值，"
             "不代表成像时刻的实测云量。"
         )
     else:
         assumptions.append(f"本次未过滤云量：{cloud_stats.get('reason') or '未启用'}。")
+    if sun_stats.get("checked_windows"):
+        assumptions.append(
+            "光学/高光谱窗口按网格代表点的太阳高度过滤："
+            f"≤ {sun_stats.get('min_altitude_deg')}° 的窗口剔除"
+            f"（检查 {sun_stats.get('checked_windows')} 个，丢弃 "
+            f"{sun_stats.get('dropped_windows')} 个）。"
+        )
     if tle_info.get("max_age_hours") is not None:
         suffix = "，结果标记 degraded" if tle_info.get("degraded") else ""
         assumptions.append(
@@ -568,6 +679,7 @@ def _run_once(spec: PlanSpec) -> dict[str, Any]:
     """按单一窗口执行一次规划。"""
 
     cloud_stats: dict[str, Any] = {"filtered": False, "reason": "未启用"}
+    sun_stats: dict[str, Any] = {}
     with session_scope() as session:
         adcode, _name, aoi, lat, lon = _resolve_aoi(session, spec)
         candidates, blocked = collect_candidates(
@@ -604,6 +716,7 @@ def _run_once(spec: PlanSpec) -> dict[str, Any]:
             captured: dict[str, Any] = {}
 
             def _capture(store: Any) -> Any:
+                store = _apply_sun(store, candidates, sun_stats)
                 if spec.cloud_filter:
                     store = _apply_cloud(store, spec, lat, lon, cloud_stats)
                 captured["store"] = store
@@ -612,7 +725,25 @@ def _run_once(spec: PlanSpec) -> dict[str, Any]:
             result = execute_request(request, root=root, window_filter=_capture)
         finally:
             shutil.rmtree(root, ignore_errors=True)
-    _annotate_result(result, candidates, blocked, cloud_stats, tle_info)
+    _annotate_result(result, candidates, blocked, cloud_stats, tle_info, sun_stats)
+    catalog = [
+        {
+            "norad": item.norad_id,
+            "sensor_class": item.sensor_class,
+            "resolution_m": item.resolution_m,
+            "swath_km": item.swath_km,
+        }
+        for item in candidates
+    ]
+    result["provenance"] = {
+        "tle_sha256": hashlib.sha256(
+            json.dumps([item.omm for item in candidates], sort_keys=True).encode()
+        ).hexdigest(),
+        "catalog_sha256": hashlib.sha256(
+            json.dumps(catalog, sort_keys=True).encode()
+        ).hexdigest(),
+        "profile_policy_version": "rs_service_db_v1",
+    }
     if captured.get("store") is not None:
         _attach_report_data(result, candidates, aoi, captured["store"])
     return result

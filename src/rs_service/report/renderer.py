@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+from shapely.geometry import shape
+from shapely.ops import unary_union
 
 BJ = timezone(timedelta(hours=8))
 TEMPLATES = Path(__file__).resolve().parent
@@ -87,6 +89,14 @@ def _notes(result: dict[str, Any]) -> list[str]:
             f"{targets['temporal_coverage_pct']:g}%，达到该阈值的面积占比目标 "
             f"{targets['area_pct']:g}%。"
         )
+    provenance = result.get("provenance") or {}
+    if provenance:
+        notes.append(
+            "复现指纹：TLE "
+            f"{str(provenance.get('tle_sha256'))[:12]}…，catalog "
+            f"{str(provenance.get('catalog_sha256'))[:12]}…，"
+            f"profile {provenance.get('profile_policy_version') or '—'}。"
+        )
     tle = result.get("tle") or {}
     if tle.get("max_age_hours") is not None:
         notes.append(
@@ -95,6 +105,40 @@ def _notes(result: dict[str, Any]) -> list[str]:
         )
     notes.append("TLE 每日同步；SGP4 在 LEO 约 1 km/天，结果只用于可行性初判。")
     return list(dict.fromkeys(notes))
+
+
+def _gap_components(result: dict[str, Any]) -> list[dict[str, Any]]:
+    geojson = (result.get("coverage_map") or {}).get("geojson") or {}
+    features = geojson.get("features") or []
+    holes = [
+        item
+        for item in features
+        if not (item.get("properties") or {}).get("qualified", False)
+    ]
+    if not holes:
+        return []
+    geometries = [shape(item["geometry"]) for item in holes]
+    merged = unary_union(geometries)
+    components = list(merged.geoms) if hasattr(merged, "geoms") else [merged]
+    rows = []
+    for component in components:
+        members = [
+            (geometry, feature.get("properties") or {})
+            for geometry, feature in zip(geometries, holes, strict=False)
+            if component.intersects(geometry.representative_point())
+        ]
+        if not members:
+            continue
+        minx, miny, maxx, maxy = component.bounds
+        rows.append(
+            {
+                "area_km2": round(sum(float(props.get("area_km2") or 0) for _, props in members), 1),
+                "cells": len(members),
+                "lon": f"{minx:.2f}–{maxx:.2f}°E",
+                "lat": f"{miny:.2f}–{maxy:.2f}°N",
+            }
+        )
+    return sorted(rows, key=lambda item: item["area_km2"], reverse=True)[:5]
 
 
 def render_report(result: dict[str, Any]) -> str:
@@ -125,6 +169,21 @@ def render_report(result: dict[str, Any]) -> str:
             }
         )
 
+    max_by_sat = {
+        int(item.get("norad_id")): float(item.get("maximum_covered_area_pct") or 0.0)
+        for item in passes
+        if item.get("norad_id") is not None
+    }
+    for item in sats:
+        item["max_covered_area_pct"] = max_by_sat.get(int(item.get("sat_id") or 0), 0.0)
+    sats.sort(
+        key=lambda item: (item.get("max_covered_area_pct") or 0.0, item.get("cumulative_minutes") or 0.0),
+        reverse=True,
+    )
+    for index, item in enumerate(sats):
+        item["rank"] = index + 1
+
+    gaps = _gap_components(result)
     weak = list(result.get("weak_areas") or [])[:10]
     city = result.get("city") or {}
     start = (result.get("input_summary") or {}).get("start_utc")
@@ -160,6 +219,12 @@ def render_report(result: dict[str, Any]) -> str:
     tick_ms = max(900, min(2500, 12000 // max(1, events_count)))
     area_met = area_target is not None and area_pct >= float(area_target) - 1e-9
     show_weak = bool(weak) and show_temporal and not area_met
+    show_gaps = bool(gaps) and area_pct < 99.9
+    scope_note = (
+        f"面积为 {hours:g}h 窗口内累计并集，不是单景；单景可执行性需另看太阳/云量与同时覆盖。"
+        if is_task1
+        else ""
+    )
     show_playback = events_count > 1
     playback_note = (
         ""
@@ -187,6 +252,9 @@ def render_report(result: dict[str, Any]) -> str:
         area_target=area_target,
         show_temporal=show_temporal,
         show_weak=show_weak,
+        show_gaps=show_gaps,
+        gaps=gaps,
+        scope_note=scope_note,
         show_playback=show_playback,
         playback_note=playback_note,
         feasible=bool(result.get("feasible")),

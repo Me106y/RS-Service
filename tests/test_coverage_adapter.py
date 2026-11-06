@@ -108,7 +108,15 @@ def test_cloud_filter_drops_windows_above_threshold() -> None:
         start + timedelta(hours=2, minutes=10), 600.0,
     )
     series = [(start, 85.0), (start + timedelta(hours=2), 10.0)]
-    kept, dropped = _filter_windows({(0, 0): (cloudy,), (0, 1): (clear,)}, series, 70)
+    from types import SimpleNamespace
+
+    cells = [SimpleNamespace(representative_lat=30.0, representative_lon=120.0)] * 2
+    kept, dropped = _filter_windows(
+        {(0, 0): (cloudy,), (0, 1): (clear,)},
+        [(30.0, 120.0, series)],
+        cells,
+        70,
+    )
     assert dropped == 1
     assert set(kept) == {(0, 1)}
 

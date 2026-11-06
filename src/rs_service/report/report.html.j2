@@ -69,6 +69,7 @@ h1 em{font-style:normal;color:var(--amber)}
 
 
 /* instrument strip */
+.scope-note{margin:10px 0 0;color:var(--muted);font-size:13px;line-height:1.55}
 .strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(0,1fr));gap:0;margin:30px 0 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line-soft)}
 .strip>div{padding:14px 16px 15px;border-right:1px solid var(--line-soft)}
 .strip>div:last-child{border-right:0}
@@ -251,7 +252,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
   <nav>
     <a href="#plan"><span class="idx">01</span>卫星构成</a>
     <a href="#cover"><span class="idx">02</span>覆盖与回放</a>
-    <a href="#purchase"><span class="idx">03</span>推荐计划</a>
+    <a href="#purchase"><span class="idx">03</span>过境窗口</a>
     <a href="#notes"><span class="idx">04</span>口径与精度</a>
   </nav>
   <div class="foot">{{ accuracy_note }}<br>{{ algo_label }}</div>
@@ -259,6 +260,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
 
 <main>
   <h1>{{ headline|safe }}</h1>
+  {% if scope_note %}<p class="scope-note">{{ scope_note }}</p>{% endif %}
   <div class="strip">
     <div><div class="lab">选中卫星</div><div class="val">{{ sat_count }}</div></div>
     <div><div class="lab">{{ target_label }}</div><div class="val amber">{{ "%.1f"|format(cards.qualified_area_pct or 0) }}<small>%</small></div></div>
@@ -276,7 +278,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
     <h2>卫星构成</h2>
     <p class="lede">选中的 {{ sat_count }} 颗星按推荐顺序排列；参数来自 RS-Service 的卫星档案。</p>
     <table><thead><tr>
-      <th>卫星</th><th>类型</th><th class="num">分辨率</th><th class="num">幅宽</th><th class="num">过境</th><th class="num">累计可见</th>
+      <th>卫星</th><th>类型</th><th class="num">分辨率</th><th class="num">幅宽</th><th class="num">过境</th><th class="num">累计可见</th><th class="num">最大瞬时</th>
     </tr></thead><tbody>
     {% for s in sats %}
     <tr>
@@ -286,6 +288,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
       <td class="num">{% if s.swath_km %}{{ s.swath_km }} km{% else %}—{% endif %}</td>
       <td class="num">{{ s.passes if s.passes is not none else "—" }}</td>
       <td class="num">{% if s.cumulative_minutes is not none %}{{ "%.1f"|format(s.cumulative_minutes) }} min{% else %}—{% endif %}</td>
+      <td class="num">{{ "%.1f"|format(s.max_covered_area_pct or 0) }}%</td>
     </tr>
     {% endfor %}
     </tbody></table>
@@ -309,7 +312,12 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
         <span><span class="swatch" style="--c:var(--map-empty)"></span>未覆盖</span>
       </div>
     </div>
-    {% if show_weak %}
+    {% if show_gaps %}
+    <h2>薄弱区</h2>
+    <table><thead><tr><th>连通片</th><th class="num">面积</th><th class="num">网格</th><th>经度</th><th>纬度</th></tr></thead><tbody>
+    {% for g in gaps %}<tr><td>未覆盖片 {{ loop.index }}</td><td class="num">{{ "%.1f"|format(g.area_km2) }} km²</td><td class="num">{{ g.cells }}</td><td class="mono">{{ g.lon }}</td><td class="mono">{{ g.lat }}</td></tr>{% endfor %}
+    </tbody></table>
+    {% elif show_weak %}
     <h2>薄弱区</h2>
     <table><thead><tr><th>网格</th><th class="num">面积</th><th class="num">时间覆盖率</th><th class="num">MRT</th></tr></thead><tbody>
     {% for w in weak %}<tr><td class="mono">{{ w.grid_id }}</td><td class="num">{{ "%.1f"|format(w.area_km2) }} km²</td><td class="num">{{ "%.1f"|format(w.temporal_coverage_pct) }}%</td><td class="num">{{ "%.1f"|format(w.mrt_minutes) }} min</td></tr>{% endfor %}
@@ -318,7 +326,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
   </section>
 
   <section id="purchase">
-    <h2>推荐计划</h2>
+    <h2>过境窗口</h2>
     <p class="lede">求解状态 <b>{{ optimality }}</b>；可行性 <b>{{ "是" if feasible else "否" }}</b>。下表是选中卫星在本窗口内的过境窗口。</p>
     <table><thead><tr><th>卫星</th><th>开始</th><th>结束</th><th class="num">时长</th><th class="num">平均覆盖</th><th class="num">最大覆盖</th></tr></thead><tbody>
     {% for p in passes %}<tr><td>{{ p.satellite }}</td><td class="mono">{{ p.start_label }}</td><td class="mono">{{ p.end_label }}</td><td class="num">{{ "%.1f"|format(p.duration_minutes) }} min</td><td class="num">{{ "%.2f"|format(p.average_covered_area_pct) }}%</td><td class="num">{{ "%.2f"|format(p.maximum_covered_area_pct) }}%</td></tr>{% endfor %}
@@ -408,7 +416,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
     idx = i;
     draw(i);
     nowEl.textContent = label(i);
-    var p = i>0 ? (cum[i-1]/TOTAL*100) : 0;
+    var p = ev.length ? (i / ev.length * 100) : 0;
     pctEl.textContent = p.toFixed(1)+'%';
   }
 
