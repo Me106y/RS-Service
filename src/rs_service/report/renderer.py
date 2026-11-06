@@ -220,8 +220,20 @@ def render_report(result: dict[str, Any]) -> str:
     area_met = area_target is not None and area_pct >= float(area_target) - 1e-9
     show_weak = bool(weak) and show_temporal and not area_met
     show_gaps = bool(gaps) and area_pct < 99.9
+    max_gap_hours = 0.0
+    if len(passes) > 1:
+        starts = sorted(
+            datetime.fromisoformat(item["start_utc"].replace("Z", "+00:00"))
+            for item in passes
+        )
+        max_gap_hours = max(
+            (later - earlier).total_seconds() / 3600.0
+            for earlier, later in zip(starts, starts[1:], strict=False)
+        )
     scope_note = (
-        f"面积为 {hours:g}h 窗口内累计并集，不是单景；单景可执行性需另看太阳/云量与同时覆盖。"
+        f"面积为 {hours:g}h 窗口内累计并集，不是单景；"
+        f"最大相邻过境间隔 {max_gap_hours:.1f}h；"
+        "单景可执行性需另看太阳/云量与同时覆盖。"
         if is_task1
         else ""
     )

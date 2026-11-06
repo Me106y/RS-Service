@@ -133,10 +133,10 @@ task1 现在回答的是：
 
 ### P2：可复现与可审计
 
-1. 结果带 `tle_sha256`、`catalog_sha256`、`profile_policy_version`。
+1. 结果带 `tle_sha256`、`catalog_sha256`、`profile_policy_version`；`plan.json` 内嵌 `tle_snapshot`（NORAD、epoch、OMM）。
 2. `satellite_table` 补齐 `sensor_class / resolution_m / swath_km`，与报告中的卫星表一致。
 3. 云量记录采样点数量、阈值、丢弃窗口数；逐窗口云量值仍在补。
-4. TLE 临时文件目前会清理；需要长期复现时保存 TLE 快照和 catalog hash。
+4. 报告首屏补最大相邻过境间隔，避免把跨天并集误读成单景。
 
 ## 5. 用 33f46 举例
 

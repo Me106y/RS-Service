@@ -743,6 +743,14 @@ def _run_once(spec: PlanSpec) -> dict[str, Any]:
             json.dumps(catalog, sort_keys=True).encode()
         ).hexdigest(),
         "profile_policy_version": "rs_service_db_v1",
+        "tle_snapshot": [
+            {
+                "norad": item.norad_id,
+                "epoch_utc": item.tle_epoch_utc,
+                "omm": item.omm,
+            }
+            for item in candidates
+        ],
     }
     if captured.get("store") is not None:
         _attach_report_data(result, candidates, aoi, captured["store"])
