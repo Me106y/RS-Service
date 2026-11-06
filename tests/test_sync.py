@@ -135,3 +135,55 @@ def test_dry_run_writes_nothing(seeded_db: str) -> None:
         assert outcome.inserted == 2
         assert session.scalar(select(func.count()).select_from(SyncRun)) == 0
         assert session.scalar(select(func.count()).select_from(TleRecord)) == 0
+
+def test_sync_falls_back_to_direct_when_proxy_fails(seeded_db: str, monkeypatch) -> None:
+    """代理链路被重置时，应自动退回直连再试一次。"""
+    from rs_service.settings import settings as settings_obj
+
+    monkeypatch.setattr(settings_obj, "http_proxy", "http://127.0.0.1:7890", raising=False)
+
+    class ProxyAwareFetcher:
+        def __init__(self) -> None:
+            self.proxies: list[str | None] = []
+
+        def __call__(self, base_url: str, **kwargs: Any) -> FetchResult:
+            proxy = kwargs.get("proxy")
+            self.proxies.append(proxy)
+            if proxy:
+                return FetchResult(
+                    ok=False,
+                    error_code="network_error",
+                    error_message="ConnectError: [SSL: UNEXPECTED_EOF_WHILE_READING]",
+                )
+            return FetchResult(ok=True, http_status=200, items=ITEMS)
+
+    fetcher = ProxyAwareFetcher()
+    with session_scope(seeded_db) as session:
+        outcome = run_sync(session, fetcher=fetcher, retry_delays=[0], sleep=lambda _: None)
+
+    assert outcome.status == "ok"
+    assert outcome.inserted == 2
+    assert fetcher.proxies[:2] == ["http://127.0.0.1:7890", None]
+
+
+def test_sync_does_not_fall_back_on_http_error(seeded_db: str, monkeypatch) -> None:
+    """HTTP 错误换链路也没用，不应触发直连重试。"""
+    from rs_service.settings import settings as settings_obj
+
+    monkeypatch.setattr(settings_obj, "http_proxy", "http://127.0.0.1:7890", raising=False)
+
+    class ForbiddenFetcher:
+        def __init__(self) -> None:
+            self.proxies: list[str | None] = []
+
+        def __call__(self, base_url: str, **kwargs: Any) -> FetchResult:
+            self.proxies.append(kwargs.get("proxy"))
+            return FetchResult(ok=False, error_code="http_403", http_status=403)
+
+    fetcher = ForbiddenFetcher()
+    with session_scope(seeded_db) as session:
+        outcome = run_sync(session, fetcher=fetcher, retry_delays=[0, 0, 0], sleep=lambda _: None)
+
+    assert outcome.status == "abandoned"
+    assert fetcher.proxies  # 每次都走代理，没有触发直连回退
+    assert all(proxy == "http://127.0.0.1:7890" for proxy in fetcher.proxies)

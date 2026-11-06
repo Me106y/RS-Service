@@ -164,6 +164,37 @@ def _age_hours(epoch_utc: str) -> float:
     return max(0.0, (now_utc() - epoch).total_seconds() / 3600.0)
 
 
+def _fetch_with_fallback(
+    fetcher: Callable[..., FetchResult],
+    *,
+    base_url: str,
+    sat_ids: set[int],
+    timeout: float,
+    client: Any | None,
+    proxy: str | None,
+) -> FetchResult:
+    """先用配置的代理抓取；代理链路失败时退回直连再试一次。
+
+    只对 ``network_error`` 回退：HTTP 4xx/5xx 或解析错误换条链路也没用。
+    """
+    result = fetcher(
+        base_url,
+        sat_ids=sat_ids,
+        timeout=timeout,
+        client=client,
+        proxy=proxy,
+    )
+    if result.ok or not proxy or result.error_code != "network_error":
+        return result
+    return fetcher(
+        base_url,
+        sat_ids=sat_ids,
+        timeout=timeout,
+        client=client,
+        proxy=None,
+    )
+
+
 def run_sync(
     session: Session,
     *,
@@ -194,8 +225,9 @@ def run_sync(
     _reset_daily(state, now)
 
     if dry_run:
-        result = fetcher(
-            source.base_url,
+        result = _fetch_with_fallback(
+            fetcher,
+            base_url=source.base_url,
             sat_ids=seed_ids,
             timeout=settings.celestrak_timeout_seconds,
             client=client,
@@ -241,8 +273,9 @@ def run_sync(
         state.last_status = "running"
         state.updated_at = iso(started)
 
-        result = fetcher(
-            source.base_url,
+        result = _fetch_with_fallback(
+            fetcher,
+            base_url=source.base_url,
             sat_ids=seed_ids,
             timeout=settings.celestrak_timeout_seconds,
             client=client,
