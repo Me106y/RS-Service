@@ -93,8 +93,20 @@ ls migrations/versions tests data
   - 改表：在空库上 `uv run alembic upgrade head` 通过。
   - A7 的 PR CI 落地后，以 CI 绿为准，本地命令仍要跑。
 - **合并由人做**：agent 可以开 PR、推修复，不自己点合并；评审意见（含 CodeRabbit）逐条处理，或写明不采纳的理由。
+- **推送双写**：`git push` 要同时推到 Gitee 镜像，别只推 GitHub：
+  ```bash
+  git push origin <branch>
+  git push gitee  <branch>
+  ```
+  远端已配好（`git remote -v` 里应有 `gitee`）；新克隆先
+  `git remote add gitee https://gitee.com/su4iky/<repo>.git`。
+  `main` 合并后由 `.github/workflows/mirror-to-gitee.yml` 自动镜像；
+  分支也双推，是为了不依赖 Actions（可能排队或失败）就能让镜像跟上。
 - **合并方式**：Squash merge，PR 标题即最终提交信息；合并后删分支。评审期间用追加提交修意见，不 force-push（会打断评审上下文）。
-- **部署不随合并自动发生**：PR 里写清要重启哪个单元，由人执行并回报。
+- **部署随合并自动发生**：`main` 有新提交后约 2 分钟内，本机 autoship 自动
+  `uv pip install -e .` 并重启 `rs-service-api` / `rs-service-mcp`；
+  结果看 `autoship status`、`autoship logs RS-Service`，失败会弹通知。
+  PR 里写清这次改动是否影响运行中的服务、回滚要做什么。
 - **改需求/表结构/口径**：先改 `../SIRIAgent/docs/PHASE2-REQUIREMENTS.md`（§12.3 变更记录），再改代码与迁移；不在代码里悄悄偏离文档。
 
 ## 完成定义：跑通才算完
