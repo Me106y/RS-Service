@@ -57,7 +57,7 @@ curl -s http://127.0.0.1:8766/api/v1/satellites/40118
 - 云量默认按 Open-Meteo 逐小时 `cloud_cover > 70%` 剔除访问；取不到时不过滤并在 assumptions 说明。
 - `task1` 不再要求 `temporal_coverage_target_pct`：服务端固定最小阈值（0.001%）按“面积至少成像一次”选星；`area_target_pct` 是**必填的面积覆盖目标**（UI 预填 90），`达标面积` 是达到该阈值的面积占比。
 - `task2` 必填 `mrt_target_minutes` 与 `area_target_pct`（UI 预填 90）；task3 的覆盖率阈值已经可填；task4/5 的面积维度由分位/面积加权指标表达，不单独暴露面积目标。
-- `auto_expand` 只允许 `task1`：先按请求窗口算，不达标再扩到 72h（最多 2 次求解）；7 天请手动把 `horizon_h` 设成 168。结果 `window` 返回请求/实际窗口和 `expanded`，报告按实际窗口展示。
+- `auto_expand` 只允许 `task1`：先按请求窗口算，不达标再扩到 72h / 168h（最多 3 次求解）；168h 是当前上限，仍不达标就返回最后一次结果。结果 `window` 返回请求/实际窗口和 `expanded`，报告按实际窗口展示。
 - TLE 年龄按 `tle_record.epoch_utc` 实时计算：>72h 标 degraded，全部候选 >168h 时返回 `tle_stale`；`plan-options.tle` 暴露 `max_age_hours` / `degraded` / `stale`。
 - `rs-service-sync.timer` 每天 03:00 同步；TLE 过期时先跑一次 `rs-service sync`。
 - 任务状态在进程内；重启丢任务，`reports/imaging-plan/<job_id>/` 下的报告文件保留，`latest` 指向最近一次。

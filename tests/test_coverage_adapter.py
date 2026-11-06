@@ -146,7 +146,7 @@ def test_run_plan_auto_expand_stops_on_first_feasible(monkeypatch) -> None:
     assert result["auto_expand"]["attempts"] == 2
 
 
-def test_run_plan_auto_expand_caps_at_72(monkeypatch) -> None:
+def test_run_plan_auto_expand_uses_7d(monkeypatch) -> None:
     from rs_service.coverage_engine import adapter
 
     calls: list[float] = []
@@ -157,26 +157,27 @@ def test_run_plan_auto_expand_caps_at_72(monkeypatch) -> None:
 
     monkeypatch.setattr(adapter, "_run_once", fake_run)
     result = adapter.run_plan(PlanSpec(operation="task1", auto_expand=True, horizon_h=8))
-    assert calls == [8.0, 72.0]
-    assert result["window"]["used_horizon_h"] == 72.0
-    assert result["auto_expand"]["attempts"] == 2
+    assert calls == [8.0, 72.0, 168.0]
+    assert result["window"]["used_horizon_h"] == 168.0
+    assert result["auto_expand"]["attempts"] == 3
 
 
-def test_auto_expand_reason_at_72h_cap(monkeypatch) -> None:
+def test_auto_expand_reason_at_168h_cap(monkeypatch) -> None:
     from rs_service.coverage_engine import adapter
 
     monkeypatch.setattr(
         adapter, "_run_once", lambda spec: {"feasible": False, "assumptions": []}
     )
     result = adapter.run_plan(PlanSpec(operation="task1", auto_expand=True, horizon_h=72))
-    assert result["window"]["attempts"] == 1
-    assert "自动扩窗上限" in result["auto_expand"]["reason"]
+    assert result["window"]["attempts"] == 2
+    assert result["window"]["used_horizon_h"] == 168.0
+    assert "168h" in result["auto_expand"]["reason"]
 
 
 def test_task1_auto_expand_ladder_only_for_task1() -> None:
     task1 = PlanSpec(operation="task1", auto_expand=True, horizon_h=8)
-    assert _horizons(task1) == [8.0, 72.0]
-    assert _horizons(PlanSpec(operation="task1", auto_expand=True, horizon_h=72)) == [72.0]
+    assert _horizons(task1) == [8.0, 72.0, 168.0]
+    assert _horizons(PlanSpec(operation="task1", auto_expand=True, horizon_h=72)) == [72.0, 168.0]
     task2 = PlanSpec(operation="task2", auto_expand=True, horizon_h=8)
     assert _horizons(task2) == [8.0]
 

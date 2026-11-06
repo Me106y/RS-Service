@@ -763,8 +763,7 @@ def _horizons(spec: PlanSpec) -> list[float]:
         "task1",
         "task_1_min_satellites_temporal",
     }:
-        # 168h 在 65 星/775 网格上会跑数分钟，自动扩窗只到 72h；7 天由用户手动选。
-        for extra in (72.0,):
+        for extra in (72.0, 168.0):
             if extra > spec.horizon_h + 1e-9 and all(
                 abs(extra - item) > 1e-9 for item in horizons
             ):
@@ -795,12 +794,12 @@ def run_plan(spec: PlanSpec) -> dict[str, Any]:
         if spec.auto_expand:
             if result.get("feasible"):
                 reason = "当前窗口已达标，无需扩窗" if not expanded else "自动扩窗后达标"
-            elif not expanded and spec.horizon_h >= 72.0 - 1e-9:
-                reason = "当前窗口已是自动扩窗上限 72h；7 天请手动设 168h"
+            elif not expanded and spec.horizon_h >= 168.0 - 1e-9:
+                reason = "当前窗口已是自动扩窗上限 168h"
             elif not expanded:
                 reason = "当前窗口未达标，但没有更长的自动档位"
             else:
-                reason = "已自动扩窗到 72h，仍未达标"
+                reason = "已自动扩窗到 168h，仍未达标"
         result["auto_expand"] = {
             "requested": bool(spec.auto_expand),
             "supported": spec.operation
