@@ -23,6 +23,12 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Actions runner 没有 committer identity，git tag -a 会直接失败。
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
       - name: Create tag from VERSION
         env:
           GITEE_USER: ${{ secrets.GITEE_USER }}
