@@ -63,6 +63,9 @@ ls migrations/versions tests data
 
 - `task1` 是**面积口径**：目标区域至少成像一次即达标（内部时间阈值固定 0.001%），面积目标默认 90%；`targets.temporal_coverage_pct` 对 task1 返回 `null`，报告/前端只认 `targets.area_pct`。单格时间覆盖率只用于 `task3`。
 - 禁止把 90% 单格时间阈值用于 task1：72 h 内单格通常 <1%，`qualified_area_pct` 会恒为 0。改口径后必须跑 `test_task1_is_area_only_regardless_of_temporal_target`、`test_task1_report_uses_area_target_and_hides_temporal_strip`，并核对 plan.json 的 `recommended.temporal_coverage_target_pct`。
+- `task1` 的报告只保留「选中卫星 + 达标面积」；禁止显示时间覆盖率、面积加权 MRT 与薄弱区（薄弱区表同样带 MRT/时间覆盖率）。
+- 改 task1/报告后必须用修改后的代码实际生成一份报告，核对标题里的达标面积与 `targets.area_pct` 一致且不为 0.0%，报告里无上述字段；只跑单测或看旧报告不算验收。
+- 线上报告验收前确认修复 PR 已合并且 `rs-service-api` 已重启；只在自己分支/本地实例生成过不算线上已修。
 - 出现“达标面积 0.0%”先看 `../SIRIAgent/docs/TROUBLESHOOTING.md` E15，不要调低目标凑非 0。
 
 ### 安全
