@@ -59,6 +59,15 @@ ls migrations/versions tests data
 - 非 200 终止本次尝试；403 “not updated” 不重试；同日不重复下载。
 - 状态写 `sync_state`；重启后不重复抓取；失败保留上一版数据，不写半套 TLE。
 
+### 成图规划口径
+
+- `task1` 是**面积口径**：目标区域至少成像一次即达标（内部时间阈值固定 0.001%），面积目标默认 90%；`targets.temporal_coverage_pct` 对 task1 返回 `null`，报告/前端只认 `targets.area_pct`。单格时间覆盖率只用于 `task3`。
+- 禁止把 90% 单格时间阈值用于 task1：72 h 内单格通常 <1%，`qualified_area_pct` 会恒为 0。改口径后必须跑 `test_task1_is_area_only_regardless_of_temporal_target`、`test_task1_report_uses_area_target_and_hides_temporal_strip`，并核对 plan.json 的 `recommended.temporal_coverage_target_pct`。
+- `task1` 的报告只保留「选中卫星 + 达标面积」；禁止显示时间覆盖率、面积加权 MRT 与薄弱区（薄弱区表同样带 MRT/时间覆盖率）。
+- 改 task1/报告后必须用修改后的代码实际生成一份报告，核对标题里的达标面积与 `targets.area_pct` 一致且不为 0.0%，报告里无上述字段；只跑单测或看旧报告不算验收。
+- 线上报告验收前确认修复 PR 已合并且 `rs-service-api` 已重启；只在自己分支/本地实例生成过不算线上已修。
+- 出现“达标面积 0.0%”先看 `../SIRIAgent/docs/TROUBLESHOOTING.md` E15，不要调低目标凑非 0。
+
 ### 安全
 
 - `.env`、DSN 密码、代理凭据不进仓库；仓库只留 `.env.example`。
@@ -82,6 +91,7 @@ ls migrations/versions tests data
 - **起分支**：先 `git fetch origin`，从 `origin/main` 开 `<type>/<kebab-slug>`（如 `docs/agents-md`）；agent 建的分支用 `agent/<slug>-<hash>`。
 - **开 PR**：`gh pr create --base main --fill`，再按模板补正文。
 - **一个 PR 只做一件事**：改了接口（REST 字段、MCP 工具名/入参、错误码）就同时开 `SIRIAgent` 的 PR 更新 `skills/*/COMMANDS.md` 与前端，两边互相链接；先合本仓，再合前端。
+- **合并后追加的提交不会进 `main`**：PR 合并后再往同一分支推的提交只留在分支上（如本仓 `agent/plan-tle-auto-e547316` 上的 `a76060d`）。声称某修复“已在 main”前，用 `git merge-base --is-ancestor <sha> origin/main`（退出 0 才算进了）验证；不要只看开着的分支/PR。
 - **提交信息**：Conventional Commits；**标题英文**、祈使句、小写开头、不加句号；**正文中文**说清为什么。类型：`feat` `fix` `docs` `test` `refactor` `perf` `ci` `build` `chore`。
   - 例：`fix(settings): resolve .env from the repository root`
   - 一个提交只做一件事；重构与行为变更不混。

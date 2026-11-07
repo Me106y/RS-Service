@@ -515,8 +515,13 @@ def _annotate_result(
     tle_info: dict[str, Any],
 ) -> dict[str, Any]:
     recommended = (result.get("selection") or {}).get("recommended_result") or {}
+    is_task1 = result.get("operation") in {"task1", "task_1_min_satellites_temporal"}
     result["targets"] = {
-        "temporal_coverage_pct": recommended.get("temporal_coverage_target_pct"),
+        # task1 使用固定 0.001% 的单格时间阈值来判“至少成像一次”，对用户没有意义；
+        # 对外不暴露这个内部阈值，面积目标单独给 area_pct。
+        "temporal_coverage_pct": (
+            None if is_task1 else recommended.get("temporal_coverage_target_pct")
+        ),
         "area_pct": recommended.get("area_target_pct"),
         "mrt_minutes": recommended.get("mrt_target_minutes"),
     }

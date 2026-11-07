@@ -47,12 +47,13 @@ curl -s http://127.0.0.1:8766/api/v1/satellites/40118
 | POST | `/plans/{job_id}/report` | 用已完成结果渲染四节 HTML，返回 `reports/imaging-plan/...` 相对路径 |
 | GET | `/plans/{job_id}/report` | 报告 HTML 本体 |
 
-任务：`task1` 最少星达覆盖率、`task2` 最少星达重访、`task3` 给定星数最大化达标面积、
+任务：`task1` 最少星达覆盖率（面积口径）、`task2` 最少星达重访、`task3` 给定星数最大化达标面积、
 `task4` 给定星数最小化面积分位 MRT、`task5` 给定星数最小化 ART。
 
 - AOI 支持省/市/区县 adcode 或 `POLYGON` WKT；只允许浙江省内。
 - 目录 65 颗（61 光学 + 4 高光谱）；SAR 缺原生入射角带，暂不参与。
 - 云量默认按 Open-Meteo 逐小时 `cloud_cover > 70%` 剔除访问；取不到时不过滤并在 assumptions 说明。
+- `task1` 按面积口径：至少成像一次即视为覆盖（内部时间阈值固定 0.001%），默认面积目标 90%，`temporal_coverage_target_pct` 会被忽略；结果 `targets.area_pct` 是面积目标、`targets.temporal_coverage_pct` 为 `null`。报告不展示单格时间覆盖率与薄弱区。
 - `auto_expand` 只允许 `task1`：先按请求窗口算，不达标再扩到 72h（最多 2 次求解）；7 天请手动把 `horizon_h` 设成 168。结果 `window` 返回请求/实际窗口和 `expanded`，报告按实际窗口展示。
 - TLE 年龄按 `tle_record.epoch_utc` 实时计算：>72h 标 degraded，全部候选 >168h 时返回 `tle_stale`；`plan-options.tle` 暴露 `max_age_hours` / `degraded` / `stale`。
 - `rs-service-sync.timer` 每天 03:00 同步；TLE 过期时先跑一次 `rs-service sync`。

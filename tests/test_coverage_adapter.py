@@ -193,7 +193,7 @@ def test_plan_create_requires_aoi_and_task_fields() -> None:
     with pytest.raises(ValidationError):
         PlanCreate(operation="task1", temporal_coverage_target_pct=90)
     with pytest.raises(ValidationError):
-        PlanCreate(operation="task1", aoi_code="330100")
+        PlanCreate(operation="task2", aoi_code="330100")
     with pytest.raises(ValidationError):
         PlanCreate(
             operation="task1",
@@ -201,6 +201,10 @@ def test_plan_create_requires_aoi_and_task_fields() -> None:
             aoi_wkt="POLYGON ((120 30, 121 30, 121 31, 120 30))",
             temporal_coverage_target_pct=90,
         )
+    # task1 是面积口径，不再要求时间覆盖率；缺省面积目标按 90%。
+    spec = PlanCreate(operation="task1", aoi_code="330100").to_spec()
+    assert spec.area_target_pct == 90.0
+    assert spec.temporal_coverage_target_pct == pytest.approx(0.001)
 
 
 def test_plan_create_to_spec_defaults_timezone() -> None:
@@ -213,3 +217,21 @@ def test_plan_create_to_spec_defaults_timezone() -> None:
     spec = model.to_spec()
     assert spec.start_utc.tzinfo is not None
     assert spec.sensor_types == ("optical", "hyperspectral", "sar")
+
+
+def test_task1_is_area_only_regardless_of_temporal_target() -> None:
+    """回归：task1 必须按面积口径算，忽略旧客户端传来的单格时间覆盖率。
+
+    否则 90% 的单格时间阈值在 72 h 内不可达，达标面积恒为 0.0%。
+    """
+
+    model = PlanCreate(
+        operation="task1",
+        aoi_code="330100",
+        temporal_coverage_target_pct=90.0,
+        area_target_pct=90.0,
+    )
+    spec = model.to_spec()
+    assert spec.temporal_coverage_target_pct == pytest.approx(0.001)
+    assert spec.area_target_pct == 90.0
+    assert spec.fallback_area_target_pct == 90.0

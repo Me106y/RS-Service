@@ -11,7 +11,7 @@ def fake_result() -> dict:
         "operation": "task_1_min_satellites_temporal",
         "feasible": True,
         "optimality": "feasible_heuristic",
-        "targets": {"temporal_coverage_pct": 90.0},
+        "targets": {"temporal_coverage_pct": 90.0, "area_pct": 90.0},
         "window": {"requested_horizon_h": 8, "used_horizon_h": 8, "expanded": False},
         "tle": {"max_age_hours": 6.0, "degraded": False},
         "summary_cards": {
@@ -82,7 +82,12 @@ def fake_result() -> dict:
 
 
 def test_render_report_contains_four_sections() -> None:
-    html = render_report(fake_result())
+    result = fake_result()
+    # task1 的报告是面积口径，不展示薄弱区与时间覆盖率；四节结构用其他任务验证。
+    result["operation"] = "task_2_min_satellites_mrt"
+    result["targets"] = {"temporal_coverage_pct": 90.0, "area_pct": 90.0}
+    result["summary_cards"]["qualified_area_pct"] = 80.0
+    html = render_report(result)
     for text in ["卫星构成", "覆盖与回放", "推荐计划", "口径与精度", "薄弱区", "杭州市", "GF-1"]:
         assert text in html
     assert "MAP_DATA" not in html
@@ -96,3 +101,12 @@ def test_write_report_writes_files_and_latest(tmp_path: Path) -> None:
     assert (tmp_path / "latest").is_symlink()
     assert (tmp_path / "latest" / "plan.json").is_file()
     assert "卫星构成" in (tmp_path / "latest" / "report.html").read_text(encoding="utf-8")
+
+
+def test_task1_report_uses_area_target_and_hides_temporal_strip() -> None:
+    result = fake_result()
+    result["targets"] = {"temporal_coverage_pct": None, "area_pct": 90.0}
+    html = render_report(result)
+    assert "达标面积（目标 90%）" in html
+    assert "单格时间覆盖率" not in html
+    assert "至少成像一次" in html
