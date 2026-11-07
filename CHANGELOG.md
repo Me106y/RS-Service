@@ -7,6 +7,7 @@ RS-Service 的用户可见变化。版本规则见 [VERSIONING.md](https://githu
 ### Added
 
 - Phase 2 完成基线：65 颗卫星目录与 TLE 日同步、过境/覆盖计算、成图规划 5 任务与四节报告、REST / MCP / CLI。
+- 发布自动化：合并到 `main` 后按 `VERSION` 自动打 tag，并双推 GitHub / Gitee。
 
 ## [0.1.0] - 2026-11-07
 
