@@ -9,6 +9,7 @@ from typing import Any
 import typer
 from sqlalchemy import func, select
 
+from . import __version__
 from .db.models import Satellite, Sensor, SensorMode, SyncRun, SyncState, TleCurrent
 from .db.seed import DEFAULT_SEED_PATH, seed_aoi, seed_catalog
 from .db.session import init_db, session_scope
@@ -211,7 +212,7 @@ def info() -> None:
     """打印当前配置与种子路径。"""
     _dump(
         {
-            "version": "0.1.0",
+            "version": __version__,
             "db_url": settings.sqlalchemy_url(),
             "db_path": str(settings.resolved_db_path()),
             "seed_path": str(DEFAULT_SEED_PATH),

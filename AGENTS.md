@@ -123,7 +123,7 @@ ls migrations/versions tests data
 
 - 版本规则与 `SIRIAgent` 共用一份：[`VERSIONING.md`](https://github.com/Me106y/SIRIAgent/blob/main/docs/VERSIONING.md)。
 - 每个合并到 `main` 的 PR 把仓库根 `VERSION` 升一级，同步 `pyproject.toml` 的 `version`，并在 `CHANGELOG.md` 顶部写该版本条目。
-- `0.x` 阶段：功能或口径变化走 MINOR，修复/文档走 PATCH；两个仓库独立编号。合并后打 `v<version>` tag。
+- 1.0 之后：破坏性变更 MAJOR、新能力或口径变化 MINOR、修复/文档 PATCH；两个仓库独立编号。合并后打 `v<version>` tag。
 
 ## 完成定义：跑通才算完
 
