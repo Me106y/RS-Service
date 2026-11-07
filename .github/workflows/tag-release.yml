@@ -1,0 +1,52 @@
+name: tag-release
+
+# 合并到 main 后按 VERSION 打 tag，并双推 GitHub / Gitee。
+# 只负责“按 VERSION 打 tag”，不判断本次 PR 该升哪一级；版本校验仍由 PR 自检与评审兜底。
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tag-release
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create tag from VERSION
+        env:
+          GITEE_USER: ${{ secrets.GITEE_USER }}
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          if [ -z "$VERSION" ]; then
+            echo "VERSION 为空"; exit 1
+          fi
+          TAG="v$VERSION"
+          REPO="${{ github.event.repository.name }}"
+          GITEE_URL="https://${GITEE_USER}:${GITEE_TOKEN}@gitee.com/${GITEE_USER}/${REPO}.git"
+
+          # 用 GITHUB_TOKEN 推的 tag 不会再触发 mirror-to-gitee，所以这里直接双推。
+          git fetch --tags origin
+          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q .; then
+            echo "GitHub 上 $TAG 已存在，跳过创建"
+          else
+            git tag -a "$TAG" -m "$TAG"
+            git push origin "$TAG"
+          fi
+
+          if [ -z "${GITEE_TOKEN:-}" ]; then
+            echo "缺少 GITEE_TOKEN，无法推 Gitee"; exit 1
+          fi
+          git push "$GITEE_URL" "$TAG"
