@@ -119,6 +119,12 @@ ls migrations/versions tests data
   PR 里写清这次改动是否影响运行中的服务、回滚要做什么。
 - **改需求/表结构/口径**：先改 `../SIRIAgent/docs/PHASE2-REQUIREMENTS.md`（§12.3 变更记录），再改代码与迁移；不在代码里悄悄偏离文档。
 
+## 版本与发布
+
+- 版本规则与 `SIRIAgent` 共用一份：[`VERSIONING.md`](https://github.com/Me106y/SIRIAgent/blob/main/docs/VERSIONING.md)。
+- 每个合并到 `main` 的 PR 把仓库根 `VERSION` 升一级，同步 `pyproject.toml` 的 `version`，并在 `CHANGELOG.md` 顶部写该版本条目。
+- `0.x` 阶段：功能或口径变化走 MINOR，修复/文档走 PATCH；两个仓库独立编号。合并后打 `v<version>` tag。
+
 ## 完成定义：跑通才算完
 
 改代码不算完成，验证过才算：
@@ -128,6 +134,7 @@ ls migrations/versions tests data
 3. 同步相关：成功、重试、`abandoned` 三条路径都有测试；失败保留上一版数据。
 4. 接口相关：REST/MCP 契约测试更新；`docs/api.md` 与 SIRIAgent 的 `COMMANDS.md` 同步。
 5. `git status` 干净：没有 `.env`、数据库文件、DSN 密码、缓存混进提交。
+6. 版本已 bump：`VERSION`、`pyproject.toml`、`CHANGELOG.md` 三者一致（规则见 SIRIAgent 的 `docs/VERSIONING.md`）。
 
 ## 文档导航
 
@@ -138,5 +145,6 @@ ls migrations/versions tests data
 | 部署与 systemd | `deploy/README.md`、`README.md` |
 | 报错与真正原因 | `../SIRIAgent/docs/TROUBLESHOOTING.md` |
 | 评审与 PR 要填什么 | `.github/pull_request_template.md` |
+| 版本与发布 | `CHANGELOG.md`、SIRIAgent 的 `docs/VERSIONING.md` |
 
 <!-- 全文控制在 200 行内：放不下的写进 docs/，这里只加一行链接。 -->
