@@ -37,9 +37,9 @@ TASKS: tuple[dict[str, Any], ...] = (
         "operation": "task1",
         "supports_auto_expand": True,
         "label": "最少星达到覆盖率",
-        "required": ["temporal_coverage_target_pct"],
+        "required": [],
         "advanced": ["area_target_pct", "fallback_area_target_pct"],
-        "description": "给定目标覆盖率与面积目标，求最少需要几颗星。",
+        "description": "给定面积覆盖目标（默认 90%），求最少需要几颗星；按“至少成像一次”判定。",
     },
     {
         "operation": "task2",
@@ -137,6 +137,13 @@ class PlanCreate(BaseModel):
         start = self.start_utc or datetime.now(UTC)
         if start.tzinfo is None:
             start = start.replace(tzinfo=UTC)
+        area_target = self.area_target_pct
+        if area_target is None:
+            area_target = 90.0
+        fallback_area_target = self.fallback_area_target_pct
+        if fallback_area_target is None:
+            # 旧引擎默认 fallback=90；严格目标低于 90 时会把 fallback 顶到严格目标之上。
+            fallback_area_target = min(90.0, float(area_target))
         return PlanSpec(
             operation=self.operation,
             aoi_code=self.aoi_code,
@@ -150,11 +157,15 @@ class PlanCreate(BaseModel):
             grid_size_km=self.grid_size_km,
             detection_step_s=self.detection_step_s,
             selection_time_limit_s=self.selection_time_limit_s,
-            temporal_coverage_target_pct=self.temporal_coverage_target_pct,
+            # task1 按面积口径：至少成像一次即达标。旧客户端传的 90% 单格时间阈值
+            # 在 72 h 内不可达，会把达标面积压成 0%，这里统一忽略。
+            temporal_coverage_target_pct=(
+                0.001 if self.operation == "task1" else self.temporal_coverage_target_pct
+            ),
             mrt_target_minutes=self.mrt_target_minutes,
             n_budget=self.n_budget,
-            area_target_pct=self.area_target_pct,
-            fallback_area_target_pct=self.fallback_area_target_pct,
+            area_target_pct=area_target,
+            fallback_area_target_pct=fallback_area_target,
             allow_area_fallback=self.allow_area_fallback,
             exact_budget=self.exact_budget,
             max_windows=self.max_windows,

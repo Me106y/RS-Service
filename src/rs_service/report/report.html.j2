@@ -69,7 +69,7 @@ h1 em{font-style:normal;color:var(--amber)}
 
 
 /* instrument strip */
-.strip{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;margin:30px 0 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line-soft)}
+.strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(0,1fr));gap:0;margin:30px 0 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line-soft)}
 .strip>div{padding:14px 16px 15px;border-right:1px solid var(--line-soft)}
 .strip>div:last-child{border-right:0}
 .context{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border-bottom:1px solid var(--line)}
@@ -260,7 +260,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
   <div class="strip">
     <div><div class="lab">选中卫星</div><div class="val">{{ sat_count }}</div></div>
     <div><div class="lab">{{ target_label }}</div><div class="val amber">{{ "%.1f"|format(cards.qualified_area_pct or 0) }}<small>%</small></div></div>
-    <div><div class="lab">时间覆盖率</div><div class="val">{{ "%.2f"|format(cards.city_mean_temporal_coverage_pct or 0) }}<small>%</small></div></div>
+    {% if show_temporal %}<div><div class="lab">时间覆盖率</div><div class="val">{{ "%.2f"|format(cards.city_mean_temporal_coverage_pct or 0) }}<small>%</small></div></div>{% endif %}
   </div>
 
   <div class="context">
@@ -306,7 +306,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
         <span><span class="swatch" style="--c:var(--map-empty)"></span>未覆盖</span>
       </div>
     </div>
-    {% if weak %}
+    {% if show_weak %}
     <h2>薄弱区</h2>
     <table><thead><tr><th>网格</th><th class="num">面积</th><th class="num">时间覆盖率</th><th class="num">MRT</th></tr></thead><tbody>
     {% for w in weak %}<tr><td class="mono">{{ w.grid_id }}</td><td class="num">{{ "%.1f"|format(w.area_km2) }} km²</td><td class="num">{{ "%.1f"|format(w.temporal_coverage_pct) }}%</td><td class="num">{{ "%.1f"|format(w.mrt_minutes) }} min</td></tr>{% endfor %}

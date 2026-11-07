@@ -42,7 +42,7 @@ def test_plan_rejects_missing_task_field() -> None:
     client = TestClient(create_app())
     response = client.post(
         "/api/v1/plans",
-        json={"operation": "task1", "aoi_code": "330100"},
+        json={"operation": "task2", "aoi_code": "330100"},
     )
     assert response.status_code == 422
 

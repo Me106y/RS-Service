@@ -71,6 +71,22 @@ def _notes(result: dict[str, Any]) -> list[str]:
     blocked = result.get("blocked_satellites") or []
     if blocked:
         notes.append(f"未参与选星 {len(blocked)} 颗，原因见任务结果。")
+    targets = result.get("targets") or {}
+    if result.get("operation") in {"task1", "task_1_min_satellites_temporal"}:
+        notes.append(
+            "达标判定：至少成像一次的面积占比目标 "
+            f"{targets.get('area_pct', 90):g}%；不设时间门槛。"
+        )
+        area_pct = float((result.get("summary_cards") or {}).get("qualified_area_pct") or 0.0)
+        area_target = targets.get("area_pct")
+        if area_target is not None and area_pct < float(area_target) - 1e-9:
+            notes.append(f"未达标面积 {100.0 - area_pct:.1f}%。")
+    elif targets.get("temporal_coverage_pct") is not None and targets.get("area_pct") is not None:
+        notes.append(
+            "达标判定：单格时间覆盖率 ≥ "
+            f"{targets['temporal_coverage_pct']:g}%，达到该阈值的面积占比目标 "
+            f"{targets['area_pct']:g}%。"
+        )
     tle = result.get("tle") or {}
     if tle.get("max_age_hours") is not None:
         notes.append(
@@ -123,15 +139,19 @@ def render_report(result: dict[str, Any]) -> str:
         else ""
     )
     targets = result.get("targets") or {}
-    target_pct = targets.get("temporal_coverage_pct")
+    is_task1 = result.get("operation") in {"task1", "task_1_min_satellites_temporal"}
+    show_temporal = not is_task1
+    area_target = targets.get("area_pct")
     target_label = (
-        f"达标面积（目标 {target_pct:g}%）"
-        if target_pct is not None
+        f"达标面积（目标 {area_target:g}%）"
+        if area_target is not None
         else "达标面积"
     )
     label = OPERATION_LABELS.get(result.get("operation", ""), result.get("operation", "成图规划"))
     count = int(cards.get("satellite_count") or len(sats))
     area_pct = float(cards.get("qualified_area_pct") or 0.0)
+    area_met = area_target is not None and area_pct >= float(area_target) - 1e-9
+    show_weak = bool(weak) and show_temporal and not area_met
     headline = f"{label}：选中 <em>{count}</em> 颗，达标面积 <em>{area_pct:.1f}%</em>"
 
     events_count = len(playback.get("events") or [])
@@ -153,7 +173,8 @@ def render_report(result: dict[str, Any]) -> str:
         window_hours=hours,
         window_note=window_note,
         target_label=target_label,
-        target_pct=target_pct,
+        show_temporal=show_temporal,
+        show_weak=show_weak,
         feasible=bool(result.get("feasible")),
         optimality=result.get("optimality") or "—",
         sat_count=count,
