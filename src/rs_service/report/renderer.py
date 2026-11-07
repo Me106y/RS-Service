@@ -87,6 +87,21 @@ def _notes(result: dict[str, Any]) -> list[str]:
             f"{targets['temporal_coverage_pct']:g}%，达到该阈值的面积占比目标 "
             f"{targets['area_pct']:g}%。"
         )
+    if result.get("city_pass_window_table"):
+        notes.append(
+            "平均覆盖：单次过境窗口内，该星每个时刻覆盖的目标区域面积占比对时间取平均"
+            "（各网格覆盖面积×持续时长求和 ÷（窗口时长 × 目标区域网格总面积））；"
+            "覆盖带扫过目标区域时同一时刻只盖住一部分，因此通常小于最大覆盖。"
+        )
+        notes.append(
+            "最大覆盖：同一窗口内该占比的瞬时峰值"
+            "（同一时刻被覆盖网格面积之和 ÷ 目标区域网格总面积），"
+            "表示一次过境最多能同时盖住目标区域多少面积。"
+        )
+        notes.append(
+            "以上两列均为单星单次过境、按裁剪网格面积累加，不叠加其它卫星；"
+            "分母是目标区域全部裁剪网格面积，不是幅宽或全城行政面积。"
+        )
     tle = result.get("tle") or {}
     if tle.get("max_age_hours") is not None:
         notes.append(
