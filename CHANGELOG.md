@@ -2,6 +2,17 @@
 
 RS-Service 的用户可见变化。版本规则见 [VERSIONING.md](https://github.com/Me106y/SIRIAgent/blob/main/docs/VERSIONING.md)。
 
+## [1.1.1] - 2026-11-09
+
+### Changed
+
+- 机会窗口按“质心膨胀视场”做逐星时步预筛，只对可能命中的时步计算网格。task1（杭州 72h / 5km / 10s）机会窗口 150.4s → 2.9s，端到端 185s → 39s；摘要、选星与过境表逐字段一致。
+- 新增 `RS_OPPORTUNITY_PRESCREEN=0` 回退开关。
+
+### Fixed
+
+- 机会缓存 key 不再包含每次求解都变的临时目录，同参数二次求解可命中缓存（机会窗口 0s，端到端约 36s）。
+
 ## [1.1.0] - 2026-11-09
 
 ### Added
