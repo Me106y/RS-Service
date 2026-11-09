@@ -112,7 +112,7 @@ def _notes(result: dict[str, Any]) -> list[str]:
     return list(dict.fromkeys(notes))
 
 
-def render_report(result: dict[str, Any]) -> str:
+def render_report(result: dict[str, Any], run_id: str | None = None) -> str:
     cards = result.get("summary_cards") or {}
     report_data = result.get("report_data") or {}
     playback = report_data.get("playback") or {}
@@ -204,6 +204,7 @@ def render_report(result: dict[str, Any]) -> str:
         speed_label=f"{tick_ms / 1000:.1f} 秒/步",
         accuracy_note=ACCURACY_NOTE,
         algo_label="coverage-engine 0.1.0-rc.1 · RS-Service",
+        purchase_run_id=run_id,
     )
 
 
@@ -220,7 +221,7 @@ def write_report(
     plan_path = target / "plan.json"
     plan_path.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
     report_path = target / "report.html"
-    report_path.write_text(render_report(result), encoding="utf-8")
+    report_path.write_text(render_report(result, run_id), encoding="utf-8")
 
     latest = target_root / "latest"
     try:
