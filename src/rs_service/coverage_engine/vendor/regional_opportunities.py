@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterable, Mapping, Sequence
@@ -830,6 +831,104 @@ def refine_regional_opportunity_windows(
     )
 
 
+
+
+def _prescreen_enabled() -> bool:
+    """机会窗口的逐星时步预筛；可用环境变量关闭做 A/B 对照。"""
+    return os.environ.get("RS_OPPORTUNITY_PRESCREEN", "1") != "0"
+
+
+def _can_prescreen(cfg: Mapping[str, Any]) -> bool:
+    """只对天底矩形传感器做预筛；指向/姿态/约束与其它传感器回退全量。"""
+    return (
+        (cfg.get("sensor_type") or "SimpleCone") == "Rectangular"
+        and not cfg.get("pointing")
+        and not cfg.get("attitude")
+        and not cfg.get("constraints")
+    )
+
+
+def _prescreen_target(grid: RegionGrid) -> tuple[float, float, float]:
+    """面积加权质心 + 覆盖全部网格点的保守半径（km）。"""
+    info = _targeted_grid_centroid(grid)
+    xs = np.asarray([cell.representative_x_m for cell in grid.cells], dtype=float)
+    ys = np.asarray([cell.representative_y_m for cell in grid.cells], dtype=float)
+    distances = np.hypot(xs - info["projected_x_m"], ys - info["projected_y_m"])
+    radius_m = float(np.max(distances)) + float(getattr(grid, "grid_size_m", 0.0))
+    return info["latitude_deg"], info["longitude_deg"], radius_m / 1000.0
+
+
+def _prescreen_cfg(
+    cfg: Mapping[str, Any], altitude_km: float, radius_km: float
+) -> dict[str, Any]:
+    """把矩形视场按 AOI 半径保守膨胀，只用于判断“这个时步值不值得算”。"""
+    params = list(cfg.get("sensor_params") or [])
+    swath_km = float(cfg.get("swath_km") or 0.0)
+    if swath_km > 0.0:
+        vertical = float(cov.swath_to_half_angle_deg(altitude_km, swath_km))
+    else:
+        vertical = float(params[0]) if params else 40.0
+    horizontal = float(
+        cfg.get("along_track_half_angle_deg")
+        or (params[1] if len(params) > 1 else 60.0)
+    )
+    delta = float(np.degrees(np.arctan(radius_km / max(altitude_km, 1.0))))
+    expanded = dict(cfg)
+    expanded.update(
+        {
+            "swath_km": 0.0,
+            "sensor_params": [vertical + delta, horizontal + delta],
+            "along_track_half_angle_deg": None,
+            # 质心的仰角可能低于 AOI 边缘；预筛只负责“是否值得算”，
+            # 不能因为质心仰角不够就把边缘可能命中的时步漏掉。
+            "min_elevation_deg": 0.0,
+        }
+    )
+    return expanded
+
+
+def _prescreen_time_indices(
+    prepared: Mapping[str, Any],
+    cfg: Mapping[str, Any],
+    target: tuple[float, float, float],
+    n_times: int,
+) -> np.ndarray | None:
+    """返回需要做网格判定的时步索引；None 表示直接走全量。"""
+    latitude, longitude, radius_km = target
+    altitude = float(
+        np.min(np.linalg.norm(prepared["r"], axis=1) - sg.R_EARTH_KM)
+    )
+    expanded = _prescreen_cfg(cfg, altitude, radius_km)
+    covered = _complex_state_for_points(
+        prepared,
+        np.asarray([latitude], dtype=float),
+        np.asarray([longitude], dtype=float),
+        expanded,
+    )
+    hit = np.flatnonzero(covered[:, 0])
+    if hit.size == 0:
+        return hit
+    if hit.size == n_times:
+        return None
+    margin = 2
+    indices = np.unique(np.concatenate([hit - margin, hit, hit + margin]))
+    return indices[(indices >= 0) & (indices < n_times)]
+
+
+def _slice_prepared(
+    prepared: Mapping[str, Any], indices: np.ndarray
+) -> dict[str, Any]:
+    """按时间索引切片几何准备结果，其余非时间字段原样保留。"""
+    length = len(prepared["r"])
+    sliced: dict[str, Any] = {}
+    for key, value in prepared.items():
+        if isinstance(value, np.ndarray) and value.ndim >= 1 and value.shape[0] == length:
+            sliced[key] = value[indices]
+        else:
+            sliced[key] = value
+    return sliced
+
+
 def compute_regional_opportunities(
     satellites: Sequence[Any],
     grid: RegionGrid,
@@ -896,6 +995,15 @@ def compute_regional_opportunities(
             metadata={"config": cfg, "targeting": target_info},
         )
 
+    prescreen_target = (
+        _prescreen_target(grid)
+        if _prescreen_enabled()
+        and any(
+            _can_prescreen(_effective_satellite_cfg(cfg, _sat_id(item)))
+            for item in satellites
+        )
+        else None
+    )
     windows: dict[tuple[int, int], tuple[AccessWindow, ...]] = {}
     for sat_index, sat in enumerate(satellites):
         sat_id = _sat_id(sat)
@@ -913,30 +1021,67 @@ def compute_regional_opportunities(
                 targeted=target_ecef if _is_targeted(effective_cfg) else None,
             )
         )
-        for cell_start in range(0, n_cells, int(cell_chunk_size)):
-            cell_stop = min(cell_start + int(cell_chunk_size), n_cells)
-            states = compute_satellite_grid_state(
-                sat,
-                grid,
-                t,
-                dt_list,
-                effective_cfg,
-                cell_start=cell_start,
-                cell_stop=cell_stop,
-                _prepared=prepared,
+        indices: np.ndarray | None = None
+        if prescreen_target is not None and _can_prescreen(effective_cfg):
+            indices = _prescreen_time_indices(
+                prepared, effective_cfg, prescreen_target, len(dt_list)
             )
-            windows.update(
-                _windows_from_state(
-                    states,
-                    dt_list,
-                    end,
-                    sat_index=sat_index,
-                    sat_id=sat_id,
-                    sat_name=sat_name,
-                    grid=grid,
-                    cell_start=cell_start,
+            if indices is not None and indices.size == 0:
+                if progress:
+                    progress(
+                        (sat_index + 1) / len(satellites),
+                        f"区域机会：{sat_name}（{sat_index + 1}/{len(satellites)}，无命中）",
+                    )
+                continue
+        if indices is not None and indices.size < len(dt_list):
+            lats_all, lons_all, _ = _grid_arrays(grid)
+            states = np.zeros((len(dt_list), n_cells), dtype=bool)
+            sub_prepared = _slice_prepared(prepared, indices)
+            for cell_start in range(0, n_cells, int(cell_chunk_size)):
+                cell_stop = min(cell_start + int(cell_chunk_size), n_cells)
+                states[indices, cell_start:cell_stop] = _complex_state_for_points(
+                    sub_prepared,
+                    lats_all[cell_start:cell_stop],
+                    lons_all[cell_start:cell_stop],
+                    effective_cfg,
                 )
-            )
+                windows.update(
+                    _windows_from_state(
+                        states[:, cell_start:cell_stop],
+                        dt_list,
+                        end,
+                        sat_index=sat_index,
+                        sat_id=sat_id,
+                        sat_name=sat_name,
+                        grid=grid,
+                        cell_start=cell_start,
+                    )
+                )
+        else:
+            for cell_start in range(0, n_cells, int(cell_chunk_size)):
+                cell_stop = min(cell_start + int(cell_chunk_size), n_cells)
+                states = compute_satellite_grid_state(
+                    sat,
+                    grid,
+                    t,
+                    dt_list,
+                    effective_cfg,
+                    cell_start=cell_start,
+                    cell_stop=cell_stop,
+                    _prepared=prepared,
+                )
+                windows.update(
+                    _windows_from_state(
+                        states,
+                        dt_list,
+                        end,
+                        sat_index=sat_index,
+                        sat_id=sat_id,
+                        sat_name=sat_name,
+                        grid=grid,
+                        cell_start=cell_start,
+                    )
+                )
         if progress:
             progress(
                 (sat_index + 1) / len(satellites),

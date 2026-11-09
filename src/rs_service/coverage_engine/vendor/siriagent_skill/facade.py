@@ -77,8 +77,9 @@ def _opportunity_cache_key(
             value = getattr(getattr(satellite, "model", None), "satnum", None)
         satellite_ids.append(int(value))
     payload = {
-        "version": 1,
-        "project_root": str(project_root),
+        # 版本 2：project_root 不再进 key——它只是每次求解的临时目录，
+        # 不影响几何结果，之前却导致机会缓存永远 miss。
+        "version": 2,
         "tle_hash": tle_hash,
         "boundary_hash": getattr(grid, "boundary_hash", None),
         "city_adcode": request.city_adcode,
