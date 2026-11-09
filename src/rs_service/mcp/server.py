@@ -10,6 +10,7 @@ from .. import __version__
 from ..astro.service import all_positions, passes_for_sat, position_now, track_for_sat
 from ..db.models import Aoi, Satellite, Sensor, SyncRun, SyncState, TleCurrent
 from ..db.session import session_scope
+from ..interpret import service as interpret_service
 from ..settings import settings
 
 ACCURACY_NOTE = "TLE/SGP4; along-track ~1 km/day; not for sub-meter planning"
@@ -209,7 +210,35 @@ def current_position(sat_id: int) -> dict[str, Any]:
         return {"ok": False, "error": str(exc), "sat_id": sat_id}
 
 
+@mcp.tool()
+def list_workspace_images() -> dict[str, Any]:
+    """List images in the SIRIAgent workspace (purchased and uploaded), without binary data."""
+    return {
+        "ok": True,
+        "items": interpret_service.list_workspace_images(),
+        "accuracy_note": interpret_service.ACCURACY_NOTE,
+    }
+
+
+@mcp.tool()
+def detect_change(before_path: str, after_path: str) -> dict[str, Any]:
+    """Run change detection synchronously on two workspace images.
+
+    Paths are relative to the SIRIAgent root and must stay under workspace/.
+    Returns the mask path, changed pixels/ratio, components, elapsed time and device.
+    """
+    try:
+        return interpret_service.run_change_detection(before_path, after_path)
+    except TimeoutError as exc:
+        return {"ok": False, "error": "timeout", "message": str(exc)}
+    except PermissionError as exc:
+        return {"ok": False, "error": "forbidden", "message": str(exc)}
+    except (ValueError, FileNotFoundError) as exc:
+        return {"ok": False, "error": type(exc).__name__, "message": str(exc)}
+
+
 def run_server(host: str | None = None, port: int | None = None) -> None:
+    interpret_service.warmup_safe()
     mcp.run(
         transport="streamable-http",
         host=host or settings.mcp_host,

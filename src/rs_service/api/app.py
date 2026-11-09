@@ -12,7 +12,9 @@ from .. import __version__
 from ..astro.service import all_positions, passes_for_sat, position_now, track_for_sat
 from ..db.models import Aoi, Satellite, Sensor, SyncRun, SyncState, TleCurrent
 from ..db.session import session_scope
+from ..interpret import service as interpret_service
 from ..plan_api import router as plan_router
+from .interpret import router as interpret_router
 
 ACCURACY_NOTE = "TLE/SGP4; along-track ~1 km/day; not for sub-meter planning"
 AOI_DIR = Path(__file__).resolve().parents[3] / "data" / "aoi"
@@ -180,6 +182,11 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     app.include_router(plan_router)
+    app.include_router(interpret_router)
+
+    @app.on_event("startup")
+    def _warmup_interpret() -> None:
+        interpret_service.warmup_safe()
     return app
 
 

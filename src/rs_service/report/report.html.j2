@@ -224,6 +224,9 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
   *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
   @page{size:A4;margin:12mm}
 }
+.buy-row{margin-top:18px;display:flex;justify-content:flex-end}
+.buy{display:inline-flex;align-items:center;padding:9px 18px;border-radius:999px;background:var(--cyan);color:#03121a;font:600 13px var(--sans);text-decoration:none;box-shadow:0 6px 18px rgba(34,211,238,.18)}
+.buy:hover{filter:brightness(1.06)}
 </style></head><body>
 <div class="top-actions">
   <button class="theme-toggle" id="themeToggle" type="button" aria-pressed="false" aria-label="切换为浅色主题" title="切换为浅色主题">
@@ -320,6 +323,9 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
     <table><thead><tr><th>卫星</th><th>开始</th><th>结束</th><th class="num">时长</th><th class="num">平均覆盖</th><th class="num">最大覆盖</th></tr></thead><tbody>
     {% for p in passes %}<tr><td>{{ p.satellite }}</td><td class="mono">{{ p.start_label }}</td><td class="mono">{{ p.end_label }}</td><td class="num">{{ "%.1f"|format(p.duration_minutes) }} min</td><td class="num">{{ "%.2f"|format(p.average_covered_area_pct) }}%</td><td class="num">{{ "%.2f"|format(p.maximum_covered_area_pct) }}%</td></tr>{% endfor %}
     </tbody></table>
+    {% if purchase_run_id %}
+    <div class="buy-row"><a class="buy" href="/purchase/{{ purchase_run_id }}">购买本方案</a></div>
+    {% endif %}
   </section>
 
   <section id="notes">

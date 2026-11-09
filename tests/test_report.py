@@ -98,6 +98,14 @@ def test_render_report_contains_four_sections() -> None:
     assert "不叠加其它卫星" in html
 
 
+def test_report_carries_purchase_link_when_run_id_given() -> None:
+    html = render_report(fake_result(), "run-abc")
+    assert "购买本方案" in html
+    assert 'href="/purchase/run-abc"' in html
+    # 没传 run_id 时不渲染按钮（单测与旧调用兼容）。
+    assert "购买本方案" not in render_report(fake_result())
+
+
 def test_write_report_writes_files_and_latest(tmp_path: Path) -> None:
     info = write_report(fake_result(), "run1", root=tmp_path)
     assert Path(info["report_path"]).is_file()
