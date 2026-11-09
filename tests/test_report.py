@@ -106,6 +106,19 @@ def test_report_carries_purchase_link_when_run_id_given() -> None:
     assert "购买本方案" not in render_report(fake_result())
 
 
+def test_task3_zero_area_hides_temporal_metrics() -> None:
+    result = fake_result()
+    result["operation"] = "task_3_max_qualified_area"
+    result["targets"] = {"temporal_coverage_pct": 50.0, "area_pct": None}
+    result["summary_cards"]["qualified_area_pct"] = 0.0
+    html = render_report(result, "run-task3")
+    assert "达标面积" in html
+    assert "时间覆盖率" not in html
+    assert "面积加权 MRT" not in html
+    assert "薄弱区" not in html
+    assert "目标单格覆盖率在窗口内不可达" in html
+
+
 def test_write_report_writes_files_and_latest(tmp_path: Path) -> None:
     info = write_report(fake_result(), "run1", root=tmp_path)
     assert Path(info["report_path"]).is_file()
