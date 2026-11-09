@@ -2,6 +2,12 @@
 
 RS-Service 的用户可见变化。版本规则见 [VERSIONING.md](https://github.com/Me106y/SIRIAgent/blob/main/docs/VERSIONING.md)。
 
+## [1.1.2] - 2026-11-09
+
+### Changed
+
+- task3 达标面积 0.0% 时，报告隐藏时间覆盖率、面积加权 MRT 与薄弱区，改为说明目标单格覆盖率在窗口内不可达；task3 的判定口径不变。
+
 ## [1.1.1] - 2026-11-09
 
 ### Changed

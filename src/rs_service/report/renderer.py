@@ -102,6 +102,16 @@ def _notes(result: dict[str, Any]) -> list[str]:
             "以上两列均为单星单次过境、按裁剪网格面积累加，不叠加其它卫星；"
             "分母是目标区域全部裁剪网格面积，不是幅宽或全城行政面积。"
         )
+    operation = result.get("operation")
+    cards = result.get("summary_cards") or {}
+    if (
+        operation in {"task3", "task_3_max_qualified_area"}
+        and float(cards.get("qualified_area_pct") or 0.0) == 0.0
+    ):
+        notes.append(
+            "达标面积 0.0%：目标单格覆盖率在窗口内不可达；"
+            "可降低目标覆盖率、延长窗口，或改用 task1 的面积口径。"
+        )
     tle = result.get("tle") or {}
     if tle.get("max_age_hours") is not None:
         notes.append(
@@ -154,8 +164,11 @@ def render_report(result: dict[str, Any], run_id: str | None = None) -> str:
         else ""
     )
     targets = result.get("targets") or {}
-    is_task1 = result.get("operation") in {"task1", "task_1_min_satellites_temporal"}
-    show_temporal = not is_task1
+    operation = result.get("operation")
+    is_task1 = operation in {"task1", "task_1_min_satellites_temporal"}
+    is_task3 = operation in {"task3", "task_3_max_qualified_area"}
+    zero_area = is_task3 and float(cards.get("qualified_area_pct") or 0.0) == 0.0
+    show_temporal = not is_task1 and not zero_area
     area_target = targets.get("area_pct")
     target_label = (
         f"达标面积（目标 {area_target:g}%）"
