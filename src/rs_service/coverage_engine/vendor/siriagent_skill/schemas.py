@@ -135,7 +135,7 @@ PROFILE_SPECS: dict[str, dict[str, Any]] = {
     # ``satellite_profile_overrides`` 注入（来自 RS-Service 的卫星档案）。
     "rs_service_db_v1": {
         "label": "RS-Service 卫星档案 Profile（逐星 override）",
-        "config": {"min_elevation_deg": 0.0},
+        "config": {"min_elevation_deg": 10.0},
         "catalog_driven": False,
         "assumption": (
             "逐星幅宽、沿轨半角与指向来自 RS-Service 卫星档案；"

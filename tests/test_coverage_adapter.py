@@ -57,6 +57,10 @@ def test_payload_uses_db_profile_and_nadir_by_default() -> None:
     override = payload["satellite_profile_overrides"][0]
     assert override["swath_km"] == 800.0
     assert override["along_track_half_angle_deg"] == ALONG_TRACK_HALF_ANGLE_DEG
+    assert override["min_elevation_deg"] == 10.0
+    assert override["constraints"] == [
+        {"name": "SunGroundElevAngle", "params": "Min 10"}
+    ]
     assert "pointing" not in override
     assert payload["area_target_pct"] == 90
     assert payload["allow_area_fallback"] is False
@@ -272,3 +276,29 @@ def test_task3_annotates_covered_area_and_hides_temporal_target() -> None:
     assert result["targets"]["temporal_coverage_pct"] is None
     assert result["targets"]["area_pct"] is None
     assert result["summary_cards"]["covered_area_pct"] == pytest.approx(96.9)
+
+
+def test_payload_sar_is_exempt_from_solar_constraint() -> None:
+    sar = replace(_candidate(), sensor_class="SAR")
+    payload = _payload(
+        PlanSpec(operation="task3", aoi_code="330100", n_budget=2),
+        [sar],
+        "330100",
+    )
+    override = payload["satellite_profile_overrides"][0]
+    assert override["min_elevation_deg"] == 10.0
+    assert "constraints" not in override
+
+
+def test_payload_applies_imaging_gate_to_all_five_tasks() -> None:
+    for operation in ("task1", "task2", "task3", "task4", "task5"):
+        payload = _payload(
+            PlanSpec(operation=operation, aoi_code="330100"),
+            [_candidate()],
+            "330100",
+        )
+        override = payload["satellite_profile_overrides"][0]
+        assert override["min_elevation_deg"] == 10.0
+        assert override["constraints"] == [
+            {"name": "SunGroundElevAngle", "params": "Min 10"}
+        ]

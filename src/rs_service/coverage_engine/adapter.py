@@ -18,6 +18,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import re
 import shutil
 import tempfile
@@ -43,6 +44,10 @@ from ..astro import cloud
 from . import VENDOR_DIR  # noqa: F401
 
 ALONG_TRACK_HALF_ANGLE_DEG = 60.0
+# 成像门限：非 SAR 最低仰角 10°；光学/高光谱另要求地面太阳高度 ≥10°。
+# 与 docs/PHASE2-REQUIREMENTS.md §4.6 及过境列表的光学可用口径一致。
+MIN_IMAGING_ELEVATION_DEG = 10.0
+OPTICAL_SUN_MIN_DEG = float(os.environ.get("RS_OPTICAL_SUN_MIN_DEG", "10"))
 _UI_SENSOR_TO_CLASS = {
     "optical": "可见光",
     "hyperspectral": "高光谱",
@@ -294,8 +299,16 @@ def _payload(
             "sensor_type": "Rectangular",
             "swath_km": item.swath_km,
             "along_track_half_angle_deg": ALONG_TRACK_HALF_ANGLE_DEG,
-            "min_elevation_deg": 0.0,
+            "min_elevation_deg": MIN_IMAGING_ELEVATION_DEG,
         }
+        if item.sensor_class != "SAR":
+            # SunGroundElevAngle 是目标地面点的太阳高度，不是卫星处太阳高度。
+            override["constraints"] = [
+                {
+                    "name": "SunGroundElevAngle",
+                    "params": f"Min {OPTICAL_SUN_MIN_DEG:g}",
+                }
+            ]
         if spec.pointing == "targeted":
             override["pointing"] = {"type": "Targeted"}
         overrides.append(override)
@@ -557,6 +570,11 @@ def _annotate_result(
     result["candidate_count"] = len(candidates)
     result["blocked_count"] = len(blocked)
     result["cloud"] = cloud_stats
+    result["imaging_constraints"] = {
+        "min_elevation_deg": MIN_IMAGING_ELEVATION_DEG,
+        "optical_sun_min_deg": OPTICAL_SUN_MIN_DEG,
+        "sar_solar_exempt": True,
+    }
     assumptions = [
         item
         for item in (result.get("assumptions") or [])
@@ -570,6 +588,11 @@ def _annotate_result(
         )
     else:
         assumptions.append(f"本次未过滤云量：{cloud_stats.get('reason') or '未启用'}。")
+    assumptions.append(
+        f"成像门限：非 SAR 最小仰角 ≥{MIN_IMAGING_ELEVATION_DEG:g}°；"
+        f"光学/高光谱另要求目标地面太阳高度 ≥{OPTICAL_SUN_MIN_DEG:g}°；"
+        "SAR 不看太阳高度，夜间过境不计入覆盖。"
+    )
     if tle_info.get("max_age_hours") is not None:
         suffix = "，结果标记 degraded" if tle_info.get("degraded") else ""
         assumptions.append(
