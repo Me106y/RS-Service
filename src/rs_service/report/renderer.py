@@ -138,6 +138,20 @@ def _notes(result: dict[str, Any]) -> list[str]:
             "覆盖面积：时间窗内至少被选中卫星覆盖一次的网格面积占比；"
             "面积按覆盖网格累加，不设额外时间门槛。"
         )
+    elif operation in {"task4", "task_4_min_area_quantile_mrt"}:
+        task4 = (result.get("selection") or {}).get("result") or {}
+        mrt_s = float(task4.get("area_quantile_mrt_s") or 0.0)
+        target = float(task4.get("area_target_pct") or targets.get("area_pct") or 90.0)
+        total = int((result.get("report_data") or {}).get("playback", {}).get("total") or 0)
+        uncovered = len(
+            (result.get("report_data") or {}).get("playback", {}).get("uncovered") or []
+        )
+        playback_pct = (100.0 * (total - uncovered) / total) if total else 0.0
+        notes.append(
+            f"任务④的 KPI 是 {target:g}% 面积分位 MRT（{mrt_s / 3600.0:.1f} h）；"
+            f"覆盖与回放显示至少覆盖一次的联合面积（{playback_pct:.1f}%），"
+            "两者不是同一个指标。"
+        )
     elif targets.get("temporal_coverage_pct") is not None and targets.get("area_pct") is not None:
         notes.append(
             "达标判定：单格时间覆盖率 ≥ "
@@ -232,23 +246,54 @@ def render_report(result: dict[str, Any], run_id: str | None = None) -> str:
     operation = result.get("operation")
     is_task1 = operation in {"task1", "task_1_min_satellites_temporal"}
     is_task3 = operation in {"task3", "task_3_max_qualified_area"}
-    # task3 是面积口径：只要覆盖一次就算面积，不再展示时间覆盖率。
-    show_temporal = not is_task1 and not is_task3
+    is_task4 = operation in {"task4", "task_4_min_area_quantile_mrt"}
+    # task3/task4 是各自口径，不再展示通用“时间覆盖率”。
+    show_temporal = not is_task1 and not is_task3 and not is_task4
     area_target = targets.get("area_pct")
-    if is_task3:
-        target_label = "覆盖面积"
-    elif area_target is not None:
-        target_label = f"达标面积（目标 {area_target:g}%）"
-    else:
-        target_label = "达标面积"
     label = OPERATION_LABELS.get(result.get("operation", ""), result.get("operation", "成图规划"))
     count = int(cards.get("satellite_count") or len(sats))
     area_pct = float(
         cards.get("covered_area_pct", cards.get("qualified_area_pct")) or 0.0
     )
+    task4 = (result.get("selection") or {}).get("result") or {}
+    mrt_s = float(task4.get("area_quantile_mrt_s") or 0.0)
+    mrt_h = mrt_s / 3600.0
+    n_budget = task4.get("n_budget")
+    if is_task4:
+        mrt_target = float(task4.get("area_target_pct") or area_target or 90.0)
+        target_label = f"{mrt_target:g}% 面积分位 MRT"
+        target_value = f"{mrt_h:.1f}"
+        target_unit = "h"
+        budget_label = "星数预算 / 实际"
+        budget_value = f"{n_budget or '—'} / {count} 颗"
+    elif is_task3:
+        target_label = "覆盖面积"
+        target_value = f"{area_pct:.1f}"
+        target_unit = "%"
+        budget_label = ""
+        budget_value = ""
+    elif area_target is not None:
+        target_label = f"达标面积（目标 {area_target:g}%）"
+        target_value = f"{area_pct:.1f}"
+        target_unit = "%"
+        budget_label = ""
+        budget_value = ""
+    else:
+        target_label = "达标面积"
+        target_value = f"{area_pct:.1f}"
+        target_unit = "%"
+        budget_label = ""
+        budget_value = ""
     area_met = area_target is not None and area_pct >= float(area_target) - 1e-9
-    show_weak = bool(weak) and not is_task1 and not area_met
-    if is_task3:
+    show_weak = bool(weak) and not is_task1 and (is_task4 or not area_met)
+    weak_metric_mode = "none" if is_task3 else ("mrt" if is_task4 else "all")
+    if is_task4:
+        headline = (
+            f"{label}：选中 <em>{count}</em> 颗，"
+            f"{float(task4.get('area_target_pct') or area_target or 90.0):g}% 面积分位 MRT "
+            f"<em>{mrt_h:.1f} h</em>"
+        )
+    elif is_task3:
         headline = f"{label}：选中 <em>{count}</em> 颗，覆盖面积 <em>{area_pct:.1f}%</em>"
     else:
         headline = f"{label}：选中 <em>{count}</em> 颗，达标面积 <em>{area_pct:.1f}%</em>"
@@ -272,9 +317,13 @@ def render_report(result: dict[str, Any], run_id: str | None = None) -> str:
         window_hours=hours,
         window_note=window_note,
         target_label=target_label,
+        target_value=target_value,
+        target_unit=target_unit,
+        budget_label=budget_label,
+        budget_value=budget_value,
         show_temporal=show_temporal,
         show_weak=show_weak,
-        show_weak_metrics=not is_task3,
+        weak_metric_mode=weak_metric_mode,
         feasible=bool(result.get("feasible")),
         optimality=result.get("optimality") or "—",
         sat_count=count,

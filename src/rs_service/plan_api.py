@@ -62,7 +62,7 @@ TASKS: tuple[dict[str, Any], ...] = (
         "supports_auto_expand": False,
         "label": "给定星数最小化面积分位 MRT",
         "required": ["n_budget"],
-        "advanced": ["area_target_pct", "mrt_area_quantile_pct"],
+        "advanced": ["area_target_pct", "mrt_area_quantile_pct", "exact_budget"],
         "description": "星数固定，求面积加权的分位 MRT 最小。",
     },
     {
@@ -140,6 +140,10 @@ class PlanCreate(BaseModel):
         area_target = self.area_target_pct
         if area_target is None:
             area_target = 90.0
+        exact_budget = self.exact_budget
+        if self.operation == "task4" and exact_budget is None:
+            # 任务④对外是“给定星数”，默认补满到 N；显式 exact_budget=False 才按最多 N。
+            exact_budget = True
         fallback_area_target = self.fallback_area_target_pct
         if fallback_area_target is None:
             # 旧引擎默认 fallback=90；严格目标低于 90 时会把 fallback 顶到严格目标之上。
@@ -169,7 +173,7 @@ class PlanCreate(BaseModel):
             area_target_pct=area_target,
             fallback_area_target_pct=fallback_area_target,
             allow_area_fallback=self.allow_area_fallback,
-            exact_budget=self.exact_budget,
+            exact_budget=exact_budget,
             max_windows=self.max_windows,
             max_weak_areas=self.max_weak_areas,
             cloud_filter=self.cloud_filter,

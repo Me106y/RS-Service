@@ -368,6 +368,7 @@ def run_selection_task(
             area_target_pct=request.area_target_pct,
             n_budget=request.n_budget,
             method=request.method,
+            exact_budget=bool(request.exact_budget),
             min_simultaneous=request.min_simultaneous,
             time_limit_s=request.selection_time_limit_s,
         )

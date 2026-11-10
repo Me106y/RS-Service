@@ -56,6 +56,7 @@ curl -s http://127.0.0.1:8766/api/v1/satellites/40118
 - 成像门限：非 SAR 最小仰角 ≥10°；光学/高光谱另要求目标地面太阳高度 ≥10°（`RS_OPTICAL_SUN_MIN_DEG`，默认 10）；SAR 不看太阳。夜间/低仰角窗口不进入覆盖与选星，结果 `imaging_constraints` 与 assumptions 会记录。
 - `task1` 按面积口径：至少成像一次即视为覆盖（内部时间阈值固定 0.001%），默认面积目标 90%，`temporal_coverage_target_pct` 会被忽略；结果 `targets.area_pct` 是面积目标、`targets.temporal_coverage_pct` 为 `null`。报告不展示单格时间覆盖率与薄弱区。
 - `task3` 按面积口径：星数固定，时间窗内至少覆盖一次即计入覆盖面积；内部时间阈值固定 0.001%，不再要求也不再使用 `temporal_coverage_target_pct`。结果 `summary_cards.covered_area_pct`（兼容字段 `qualified_area_pct`）就是覆盖面积，`targets.temporal_coverage_pct` / `targets.area_pct` 为 `null`。报告不展示时间覆盖率/MRT，薄弱区只列网格与面积。
+- `task4` 默认 `exact_budget=True`：给定 N 颗就补满 N 颗，按 N% 面积分位 MRT 做固定预算贪心；报告首屏显示「N% 面积分位 MRT」与「星数预算 / 实际」，不展示时间覆盖率；覆盖与回放显示联合覆盖，不是 MRT KPI。
 - `auto_expand` 只允许 `task1`：先按请求窗口算，不达标再扩到 72h（最多 2 次求解）；7 天请手动把 `horizon_h` 设成 168。结果 `window` 返回请求/实际窗口和 `expanded`，报告按实际窗口展示。
 - TLE 年龄按 `tle_record.epoch_utc` 实时计算：>72h 标 degraded，全部候选 >168h 时返回 `tle_stale`；`plan-options.tle` 暴露 `max_age_hours` / `degraded` / `stale`。
 - `rs-service-sync.timer` 每天 03:00 同步；TLE 过期时先跑一次 `rs-service sync`。
