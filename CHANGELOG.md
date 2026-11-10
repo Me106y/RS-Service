@@ -2,6 +2,13 @@
 
 RS-Service 的用户可见变化。版本规则见 [VERSIONING.md](https://github.com/Me106y/SIRIAgent/blob/main/docs/VERSIONING.md)。
 
+## [1.3.1] - 2026-11-10
+
+### Changed
+
+- 报告“推荐计划”给同一颗星的多段可见窗口加「第 i/n 段」标记，并说明中间空档不是重复选星。
+- 报告“薄弱区”不再显示 `330100:-29:-2:0` 这类内部网格 ID，改为“杭州西南 + 经纬度”，并说明是近似方位。
+
 ## [1.3.0] - 2026-11-10
 
 ### Changed
