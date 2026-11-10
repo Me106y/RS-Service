@@ -179,3 +179,27 @@ def test_report_labels_repeated_satellite_pass_segments() -> None:
     assert "第 1/2 段" in html
     assert "第 2/2 段" in html
     assert "不是重复选星" in html
+
+
+def test_task4_report_uses_mrt_kpi_and_no_time_coverage() -> None:
+    result = fake_result()
+    result["operation"] = "task_4_min_area_quantile_mrt"
+    result["targets"] = {"temporal_coverage_pct": None, "area_pct": 90.0, "mrt_minutes": None}
+    result["summary_cards"]["satellite_count"] = 3
+    result["summary_cards"]["qualified_area_pct"] = 90.537
+    result["selection"] = {
+        "result": {
+            "n_budget": 3,
+            "area_target_pct": 90.0,
+            "area_quantile_mrt_s": 255520.0,
+            "selected_sat_names": ["A", "B", "C"],
+        }
+    }
+    html = render_report(result, "run-task4")
+    assert "90% 面积分位 MRT" in html
+    assert "71.0 h" in html
+    assert "星数预算 / 实际" in html
+    assert "3 / 3 颗" in html
+    assert "时间覆盖率" not in html
+    assert "达标面积" not in html
+    assert "两者不是同一个指标" in html

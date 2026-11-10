@@ -302,3 +302,13 @@ def test_payload_applies_imaging_gate_to_all_five_tasks() -> None:
         assert override["constraints"] == [
             {"name": "SunGroundElevAngle", "params": "Min 10"}
         ]
+
+
+def test_task4_defaults_to_exact_budget() -> None:
+    spec = PlanCreate(operation="task4", aoi_code="330100", n_budget=3).to_spec()
+    assert spec.exact_budget is True
+    # 显式关掉时才按最多 N。
+    spec2 = PlanCreate(
+        operation="task4", aoi_code="330100", n_budget=3, exact_budget=False
+    ).to_spec()
+    assert spec2.exact_budget is False

@@ -2,6 +2,14 @@
 
 RS-Service 的用户可见变化。版本规则见 [VERSIONING.md](https://github.com/Me106y/SIRIAgent/blob/main/docs/VERSIONING.md)。
 
+## [1.4.0] - 2026-11-10
+
+### Changed
+
+- task4 默认按“给定 N 颗”补满预算（`exact_budget=True`），不再只返回满足 90% 面积目标的最少星数；新增固定 N 的面积分位 MRT 贪心，结果是启发式。
+- task4 报告改为自己的 KPI：标题与首屏显示「N% 面积分位 MRT」，并显示「星数预算 / 实际」；不再把达标面积/时间覆盖率当 task4 标题，也不展示时间覆盖率。
+- task4 薄弱区只显示位置、面积与 MRT；报告口径说明“覆盖与回放是至少覆盖一次的联合面积，不是 MRT KPI”。
+
 ## [1.3.1] - 2026-11-10
 
 ### Changed

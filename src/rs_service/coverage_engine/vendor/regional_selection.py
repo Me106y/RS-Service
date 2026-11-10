@@ -1747,12 +1747,104 @@ def _quantile_result(
     )
 
 
+def _evaluate_quantile(
+    store: OpportunityStore,
+    selected: Sequence[int],
+    min_simultaneous: int = 1,
+) -> RegionalMetricsResult:
+    """任务④固定 N 颗时按窗口指标评估面积分位 MRT。"""
+
+    return compute_regional_metrics(
+        store,
+        selected_sat_indices=selected,
+        min_simultaneous=min_simultaneous,
+    )
+
+
+def _score_quantile(
+    metrics: RegionalMetricsResult, area_target_pct: float
+) -> tuple[float, float, float]:
+    """任务④固定 N 颗的字典序：面积分位 MRT、面积加权 MRT、覆盖率。"""
+
+    return (
+        _area_quantile_mrt(metrics, area_target_pct),
+        float(metrics.city.area_weighted_mrt_s),
+        -float(metrics.city.area_weighted_temporal_coverage_pct),
+    )
+
+
+def greedy_select_quantile_mrt(
+    store: OpportunityStore,
+    *,
+    n_budget: int,
+    area_target_pct: float = 90.0,
+    min_simultaneous: int = 1,
+    exact_budget: bool = True,
+) -> SelectionResult:
+    """任务④固定 N 颗：贪心最小化面积分位 MRT。
+
+    先用 ``area_target_pct`` 定义“90% 面积分位”，每轮加入一颗能让该分位
+    MRT 下降最多的卫星；``exact_budget=True`` 时补满到 N 颗，不再按“最少星”
+    提前停止。结果是启发式，不声称连续窗口全局最优。
+    """
+
+    if int(n_budget) != n_budget or int(n_budget) < 0:
+        raise ValueError("n_budget 必须是非负整数。")
+    n_budget = int(n_budget)
+    area_target_pct = float(area_target_pct)
+    if not 0.0 <= area_target_pct <= 100.0:
+        raise ValueError("area_target_pct 必须在 0～100 之间。")
+    if int(min_simultaneous) != min_simultaneous or min_simultaneous <= 0:
+        raise ValueError("min_simultaneous 必须是正整数。")
+    usable = sorted({sat_index for sat_index, _ in store.windows})
+    limit = min(n_budget, len(usable))
+    selected: list[int] = []
+    current = _evaluate_quantile(store, selected, min_simultaneous)
+    while len(selected) < limit:
+        best_index: int | None = None
+        best_metrics: RegionalMetricsResult | None = None
+        best_score = _score_quantile(current, area_target_pct)
+        for sat_index in usable:
+            if sat_index in selected:
+                continue
+            trial = _evaluate_quantile(
+                store, [*selected, sat_index], min_simultaneous
+            )
+            score = _score_quantile(trial, area_target_pct)
+            if best_metrics is None or score < best_score:
+                best_index = sat_index
+                best_metrics = trial
+                best_score = score
+        if best_index is None or best_metrics is None:
+            break
+        if not exact_budget and best_score >= _score_quantile(current, area_target_pct):
+            break
+        selected.append(best_index)
+        current = best_metrics
+    quantile_s = _area_quantile_mrt(current, area_target_pct)
+    return _result(
+        store,
+        selected,
+        method="greedy_quantile_mrt",
+        area_target_pct=area_target_pct,
+        mrt_target_s=quantile_s,
+        status="feasible_heuristic",
+        note=(
+            f"固定 {n_budget} 颗（实际 {len(selected)} 颗），贪心最小化 "
+            f"{area_target_pct:g}% 面积分位 MRT；结果是启发式。"
+        ),
+        constraint_count=0,
+        min_simultaneous=min_simultaneous,
+    )
+
+
 def select_min_area_quantile_mrt(
     store: OpportunityStore,
     *,
     area_target_pct: float = 90.0,
     n_budget: int,
     method: str = "ilp",
+    exact_budget: bool = False,
     min_simultaneous: int = 1,
     time_limit_s: int = 180,
     refine_step_seconds: float | None = None,
@@ -1779,6 +1871,27 @@ def select_min_area_quantile_mrt(
     method = str(method).lower()
     if method not in {"greedy", "ilp", "both"}:
         raise ValueError("method 必须是 greedy、ilp 或 both。")
+
+    if exact_budget and n_budget > 0 and area_target_pct > 0.0:
+        selection = greedy_select_quantile_mrt(
+            store,
+            n_budget=n_budget,
+            area_target_pct=area_target_pct,
+            min_simultaneous=min_simultaneous,
+            exact_budget=True,
+        )
+        return _quantile_result(
+            store,
+            selection,
+            area_target_pct=area_target_pct,
+            n_budget=n_budget,
+            method="greedy_quantile_mrt",
+            mrt_threshold_s=selection.mrt_target_s,
+            feasible=selection.feasible,
+            status=selection.status,
+            note=selection.note,
+            evaluated_thresholds_s=(),
+        )
 
     effective_store = store
     if refine_step_seconds is not None:
