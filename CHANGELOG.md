@@ -2,6 +2,13 @@
 
 RS-Service 的用户可见变化。版本规则见 [VERSIONING.md](https://github.com/Me106y/SIRIAgent/blob/main/docs/VERSIONING.md)。
 
+## [1.3.0] - 2026-11-10
+
+### Changed
+
+- 覆盖引擎接入成像门限：非 SAR 最小仰角 ≥10°；光学/高光谱另要求目标地面太阳高度 ≥10°（`RS_OPTICAL_SUN_MIN_DEG`，默认 10）；SAR 不看太阳。夜间/低仰角过境不再计入覆盖，五个选星任务共用。
+- task3 在太阳门限下重跑预算敏感性：n=2（ZIYUAN 3-03 + BEIJING-3B）已覆盖 100%；n=3 第三颗改为白天过境的 ZY-1 02E（90 km 幅宽，10:47，二次覆盖），不再选夜航 HJ-2B。
+
 ## [1.2.0] - 2026-11-10
 
 ### Changed
