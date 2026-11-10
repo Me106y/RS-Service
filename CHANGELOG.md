@@ -2,6 +2,14 @@
 
 RS-Service 的用户可见变化。版本规则见 [VERSIONING.md](https://github.com/Me106y/SIRIAgent/blob/main/docs/VERSIONING.md)。
 
+## [1.2.0] - 2026-11-10
+
+### Changed
+
+- task3 从“单格时间覆盖率 ≥ 目标的最大达标面积”改为“给定星数在时间窗内最大化覆盖面积”：不再要求 `temporal_coverage_target_pct`，内部固定 0.001% 的至少覆盖一次阈值，`summary_cards.covered_area_pct` 即覆盖面积，`targets.temporal_coverage_pct`/`area_pct` 为 `null`。
+- task3 报告与结果卡改称“覆盖面积”，不再展示时间覆盖率、面积加权 MRT；薄弱区只保留网格与面积。
+- 报告回放按“覆盖该网格总时长最多的卫星”着色，修复只显示最先覆盖卫星颜色、其余选中卫星颜色不出现的问题；回放终值与顶部覆盖面积一致。
+
 ## [1.1.2] - 2026-11-09
 
 ### Changed

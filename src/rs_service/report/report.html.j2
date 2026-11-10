@@ -294,7 +294,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
 
   <section id="cover">
     <h2>覆盖与回放</h2>
-    <p class="lede">每个点是一个裁剪网格单元；颜色表示首次覆盖它的卫星。拖动时间轴查看覆盖累积，点按播放按 {{ speed_label }} 推进。</p>
+    <p class="lede">每个点是一个裁剪网格单元；颜色表示覆盖该网格总时长最多的卫星。拖动时间轴查看覆盖累积，点按播放按 {{ speed_label }} 推进。</p>
     <div class="mapwrap">
       <canvas id="map" width="1280" height="720" role="img" aria-label="覆盖分布与回放"></canvas>
       <div class="transport">
@@ -311,8 +311,8 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
     </div>
     {% if show_weak %}
     <h2>薄弱区</h2>
-    <table><thead><tr><th>网格</th><th class="num">面积</th><th class="num">时间覆盖率</th><th class="num">MRT</th></tr></thead><tbody>
-    {% for w in weak %}<tr><td class="mono">{{ w.grid_id }}</td><td class="num">{{ "%.1f"|format(w.area_km2) }} km²</td><td class="num">{{ "%.1f"|format(w.temporal_coverage_pct) }}%</td><td class="num">{{ "%.1f"|format(w.mrt_minutes) }} min</td></tr>{% endfor %}
+    <table><thead><tr><th>网格</th><th class="num">面积</th>{% if show_weak_metrics %}<th class="num">时间覆盖率</th><th class="num">MRT</th>{% endif %}</tr></thead><tbody>
+    {% for w in weak %}<tr><td class="mono">{{ w.grid_id }}</td><td class="num">{{ "%.1f"|format(w.area_km2) }} km²</td>{% if show_weak_metrics %}<td class="num">{{ "%.1f"|format(w.temporal_coverage_pct) }}%</td><td class="num">{{ "%.1f"|format(w.mrt_minutes) }} min</td>{% endif %}</tr>{% endfor %}
     </tbody></table>
     {% endif %}
   </section>

@@ -17,7 +17,7 @@ ACCURACY_NOTE = "TLE/SGP4; along-track ~1 km/day; not for sub-meter planning"
 OPERATION_LABELS = {
     "task_1_min_satellites_temporal": "最少星达到覆盖率",
     "task_2_min_satellites_mrt": "最少星达到重访",
-    "task_3_max_qualified_area": "给定星数最大化达标面积",
+    "task_3_max_qualified_area": "给定星数最大化覆盖面积",
     "task_4_min_area_quantile_mrt": "给定星数最小化面积分位 MRT",
     "task_5_min_area_weighted_art": "给定星数最小化 ART",
 }
@@ -72,7 +72,8 @@ def _notes(result: dict[str, Any]) -> list[str]:
     if blocked:
         notes.append(f"未参与选星 {len(blocked)} 颗，原因见任务结果。")
     targets = result.get("targets") or {}
-    if result.get("operation") in {"task1", "task_1_min_satellites_temporal"}:
+    operation = result.get("operation")
+    if operation in {"task1", "task_1_min_satellites_temporal"}:
         notes.append(
             "达标判定：至少成像一次的面积占比目标 "
             f"{targets.get('area_pct', 90):g}%；不设时间门槛。"
@@ -81,6 +82,11 @@ def _notes(result: dict[str, Any]) -> list[str]:
         area_target = targets.get("area_pct")
         if area_target is not None and area_pct < float(area_target) - 1e-9:
             notes.append(f"未达标面积 {100.0 - area_pct:.1f}%。")
+    elif operation in {"task3", "task_3_max_qualified_area"}:
+        notes.append(
+            "覆盖面积：时间窗内至少被选中卫星覆盖一次的网格面积占比；"
+            "面积按覆盖网格累加，不设额外时间门槛。"
+        )
     elif targets.get("temporal_coverage_pct") is not None and targets.get("area_pct") is not None:
         notes.append(
             "达标判定：单格时间覆盖率 ≥ "
@@ -102,16 +108,12 @@ def _notes(result: dict[str, Any]) -> list[str]:
             "以上两列均为单星单次过境、按裁剪网格面积累加，不叠加其它卫星；"
             "分母是目标区域全部裁剪网格面积，不是幅宽或全城行政面积。"
         )
-    operation = result.get("operation")
     cards = result.get("summary_cards") or {}
     if (
         operation in {"task3", "task_3_max_qualified_area"}
-        and float(cards.get("qualified_area_pct") or 0.0) == 0.0
+        and float(cards.get("covered_area_pct", cards.get("qualified_area_pct")) or 0.0) == 0.0
     ):
-        notes.append(
-            "达标面积 0.0%：目标单格覆盖率在窗口内不可达；"
-            "可降低目标覆盖率、延长窗口，或改用 task1 的面积口径。"
-        )
+        notes.append("覆盖面积 0.0%：当前窗口内选中卫星没有覆盖目标区域；可延长窗口或换星。")
     tle = result.get("tle") or {}
     if tle.get("max_age_hours") is not None:
         notes.append(
@@ -167,20 +169,26 @@ def render_report(result: dict[str, Any], run_id: str | None = None) -> str:
     operation = result.get("operation")
     is_task1 = operation in {"task1", "task_1_min_satellites_temporal"}
     is_task3 = operation in {"task3", "task_3_max_qualified_area"}
-    zero_area = is_task3 and float(cards.get("qualified_area_pct") or 0.0) == 0.0
-    show_temporal = not is_task1 and not zero_area
+    # task3 是面积口径：只要覆盖一次就算面积，不再展示时间覆盖率。
+    show_temporal = not is_task1 and not is_task3
     area_target = targets.get("area_pct")
-    target_label = (
-        f"达标面积（目标 {area_target:g}%）"
-        if area_target is not None
-        else "达标面积"
-    )
+    if is_task3:
+        target_label = "覆盖面积"
+    elif area_target is not None:
+        target_label = f"达标面积（目标 {area_target:g}%）"
+    else:
+        target_label = "达标面积"
     label = OPERATION_LABELS.get(result.get("operation", ""), result.get("operation", "成图规划"))
     count = int(cards.get("satellite_count") or len(sats))
-    area_pct = float(cards.get("qualified_area_pct") or 0.0)
+    area_pct = float(
+        cards.get("covered_area_pct", cards.get("qualified_area_pct")) or 0.0
+    )
     area_met = area_target is not None and area_pct >= float(area_target) - 1e-9
-    show_weak = bool(weak) and show_temporal and not area_met
-    headline = f"{label}：选中 <em>{count}</em> 颗，达标面积 <em>{area_pct:.1f}%</em>"
+    show_weak = bool(weak) and not is_task1 and not area_met
+    if is_task3:
+        headline = f"{label}：选中 <em>{count}</em> 颗，覆盖面积 <em>{area_pct:.1f}%</em>"
+    else:
+        headline = f"{label}：选中 <em>{count}</em> 颗，达标面积 <em>{area_pct:.1f}%</em>"
 
     events_count = len(playback.get("events") or [])
     tick_ms = max(900, min(2500, 12000 // max(1, events_count)))
@@ -203,6 +211,7 @@ def render_report(result: dict[str, Any], run_id: str | None = None) -> str:
         target_label=target_label,
         show_temporal=show_temporal,
         show_weak=show_weak,
+        show_weak_metrics=not is_task3,
         feasible=bool(result.get("feasible")),
         optimality=result.get("optimality") or "—",
         sat_count=count,

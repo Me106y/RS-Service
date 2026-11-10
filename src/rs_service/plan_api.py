@@ -52,10 +52,10 @@ TASKS: tuple[dict[str, Any], ...] = (
     {
         "operation": "task3",
         "supports_auto_expand": False,
-        "label": "给定星数最大化达标面积",
-        "required": ["n_budget", "temporal_coverage_target_pct"],
-        "advanced": ["exact_budget", "area_target_pct"],
-        "description": "星数固定，求能达到目标覆盖率的面积最大。",
+        "label": "给定星数最大化覆盖面积",
+        "required": ["n_budget"],
+        "advanced": ["exact_budget"],
+        "description": "星数固定，在时间窗内求至少覆盖一次的面积最大；不设时间覆盖率门槛。",
     },
     {
         "operation": "task4",
@@ -157,10 +157,12 @@ class PlanCreate(BaseModel):
             grid_size_km=self.grid_size_km,
             detection_step_s=self.detection_step_s,
             selection_time_limit_s=self.selection_time_limit_s,
-            # task1 按面积口径：至少成像一次即达标。旧客户端传的 90% 单格时间阈值
-            # 在 72 h 内不可达，会把达标面积压成 0%，这里统一忽略。
+            # task1/task3 都按面积口径：至少成像一次即覆盖。旧客户端给 task3 传的
+            # 单格时间覆盖率阈值在 72 h 内通常不可达，会把覆盖面积压成 0%，这里统一忽略。
             temporal_coverage_target_pct=(
-                0.001 if self.operation == "task1" else self.temporal_coverage_target_pct
+                0.001
+                if self.operation in {"task1", "task3"}
+                else self.temporal_coverage_target_pct
             ),
             mrt_target_minutes=self.mrt_target_minutes,
             n_budget=self.n_budget,

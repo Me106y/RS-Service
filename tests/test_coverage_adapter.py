@@ -235,3 +235,40 @@ def test_task1_is_area_only_regardless_of_temporal_target() -> None:
     assert spec.temporal_coverage_target_pct == pytest.approx(0.001)
     assert spec.area_target_pct == 90.0
     assert spec.fallback_area_target_pct == 90.0
+
+
+def test_task3_is_area_only_regardless_of_temporal_target() -> None:
+    """回归：task3 是“给定星数最大化覆盖面积”，不再要求/使用时间覆盖率目标。"""
+
+    model = PlanCreate(
+        operation="task3",
+        aoi_code="330100",
+        n_budget=3,
+        temporal_coverage_target_pct=50.0,
+    )
+    spec = model.to_spec()
+    assert spec.n_budget == 3
+    assert spec.temporal_coverage_target_pct == pytest.approx(0.001)
+    # 新客户端不再传目标覆盖率也必须能提交。
+    spec2 = PlanCreate(operation="task3", aoi_code="330100", n_budget=3).to_spec()
+    assert spec2.temporal_coverage_target_pct == pytest.approx(0.001)
+
+
+def test_task3_annotates_covered_area_and_hides_temporal_target() -> None:
+    result = {
+        "operation": "task3",
+        "selection": {
+            "recommended_result": {
+                "temporal_coverage_target_pct": 0.001,
+                "area_target_pct": 90.0,
+                "mrt_target_minutes": None,
+            }
+        },
+        "summary_cards": {"qualified_area_pct": 96.9},
+    }
+    from rs_service.coverage_engine.adapter import _annotate_result
+
+    _annotate_result(result, [], [], {}, {})
+    assert result["targets"]["temporal_coverage_pct"] is None
+    assert result["targets"]["area_pct"] is None
+    assert result["summary_cards"]["covered_area_pct"] == pytest.approx(96.9)
