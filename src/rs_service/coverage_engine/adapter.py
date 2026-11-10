@@ -410,18 +410,32 @@ def _playback(
     selected_indices: Iterable[int],
     start_utc: datetime,
 ) -> dict[str, Any]:
-    """从机会窗口重建"逐格点首次覆盖"时间轴，供旧报告的地图画布回放。"""
+    """重建"逐格点覆盖"时间轴，供报告的地图画布回放。
+
+    每个网格归属到窗口内累计覆盖时长最多的选中卫星，而不是"最先覆盖"的卫星。
+    后者会让最早过境的那颗星吞掉所有格子，其余选中卫星在图例里有颜色、地图上却
+    永远不出现。按覆盖时长归属后，每颗有贡献的卫星都能露出自己的颜色；每个格子
+    仍只归属一颗星，回放百分比按格子数累加，终值等于覆盖面积。
+    """
 
     selected = {int(item) for item in selected_indices}
     cells = store.grid.cells
-    first: dict[int, tuple[datetime, int]] = {}
+    best: dict[int, tuple[float, int, datetime]] = {}
     for (sat_index, grid_index), windows in store.windows.items():
         if sat_index not in selected or not windows:
             continue
+        duration = sum(
+            max(0.0, (item.end_utc - item.start_utc).total_seconds())
+            for item in windows
+        )
         moment = min(item.start_utc for item in windows)
-        current = first.get(grid_index)
-        if current is None or moment < current[0]:
-            first[grid_index] = (moment, sat_index)
+        current = best.get(grid_index)
+        if (
+            current is None
+            or duration > current[0] + 1e-9
+            or (abs(duration - current[0]) <= 1e-9 and moment < current[2])
+        ):
+            best[grid_index] = (duration, int(sat_index), moment)
 
     names = {
         int(store.satellites[index].norad_id): store.satellites[index].name
@@ -436,7 +450,7 @@ def _playback(
         colors_light[str(norad)] = palette_light[position % len(palette_light)]
 
     grouped: dict[tuple[int, datetime], list[list[float]]] = {}
-    for grid_index, (moment, sat_index) in first.items():
+    for grid_index, (_duration, sat_index, moment) in best.items():
         cell = cells[grid_index]
         bucket = moment.replace(second=0, microsecond=0)
         grouped.setdefault((sat_index, bucket), []).append(
@@ -456,7 +470,7 @@ def _playback(
     uncovered = [
         [round(cell.representative_lon, 4), round(cell.representative_lat, 4)]
         for index, cell in enumerate(cells)
-        if index not in first
+        if index not in best
     ]
     return {
         "events": events,
@@ -515,16 +529,29 @@ def _annotate_result(
     tle_info: dict[str, Any],
 ) -> dict[str, Any]:
     recommended = (result.get("selection") or {}).get("recommended_result") or {}
-    is_task1 = result.get("operation") in {"task1", "task_1_min_satellites_temporal"}
+    operation = result.get("operation")
+    is_area_only = operation in {
+        "task1",
+        "task_1_min_satellites_temporal",
+        "task3",
+        "task_3_max_qualified_area",
+    }
     result["targets"] = {
-        # task1 使用固定 0.001% 的单格时间阈值来判“至少成像一次”，对用户没有意义；
-        # 对外不暴露这个内部阈值，面积目标单独给 area_pct。
+        # task1/task3 使用固定 0.001% 的单格时间阈值来判“至少成像一次”，对用户没有意义；
+        # 对外不暴露这个内部阈值，覆盖面积就是 qualified_area_pct。
         "temporal_coverage_pct": (
-            None if is_task1 else recommended.get("temporal_coverage_target_pct")
+            None if is_area_only else recommended.get("temporal_coverage_target_pct")
         ),
-        "area_pct": recommended.get("area_target_pct"),
+        "area_pct": (
+            None
+            if operation in {"task3", "task_3_max_qualified_area"}
+            else recommended.get("area_target_pct")
+        ),
         "mrt_minutes": recommended.get("mrt_target_minutes"),
     }
+    if operation in {"task3", "task_3_max_qualified_area"}:
+        cards = result.setdefault("summary_cards", {})
+        cards["covered_area_pct"] = cards.get("qualified_area_pct")
     result["tle"] = tle_info
     result["blocked_satellites"] = blocked
     result["candidate_count"] = len(candidates)

@@ -106,17 +106,33 @@ def test_report_carries_purchase_link_when_run_id_given() -> None:
     assert "购买本方案" not in render_report(fake_result())
 
 
-def test_task3_zero_area_hides_temporal_metrics() -> None:
+def test_task3_uses_covered_area_and_hides_temporal_metrics() -> None:
     result = fake_result()
     result["operation"] = "task_3_max_qualified_area"
-    result["targets"] = {"temporal_coverage_pct": 50.0, "area_pct": None}
-    result["summary_cards"]["qualified_area_pct"] = 0.0
+    result["targets"] = {"temporal_coverage_pct": None, "area_pct": None}
+    result["summary_cards"]["qualified_area_pct"] = 96.9
+    result["summary_cards"]["covered_area_pct"] = 96.9
     html = render_report(result, "run-task3")
-    assert "达标面积" in html
+    assert "覆盖面积" in html
+    assert "96.9%" in html
+    assert "达标面积" not in html
     assert "时间覆盖率" not in html
     assert "面积加权 MRT" not in html
-    assert "薄弱区" not in html
-    assert "目标单格覆盖率在窗口内不可达" in html
+    # 薄弱区保留网格与面积，但不出现时间覆盖率/MRT 两列。
+    assert "薄弱区" in html
+    assert "MRT" not in html
+
+
+def test_task3_zero_area_explains_no_coverage() -> None:
+    result = fake_result()
+    result["operation"] = "task_3_max_qualified_area"
+    result["targets"] = {"temporal_coverage_pct": None, "area_pct": None}
+    result["summary_cards"]["qualified_area_pct"] = 0.0
+    result["summary_cards"]["covered_area_pct"] = 0.0
+    html = render_report(result, "run-task3")
+    assert "覆盖面积" in html
+    assert "时间覆盖率" not in html
+    assert "当前窗口内选中卫星没有覆盖目标区域" in html
 
 
 def test_write_report_writes_files_and_latest(tmp_path: Path) -> None:
