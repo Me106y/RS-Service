@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import math
 import os
+from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -28,6 +30,55 @@ def _bj(value: str | None, fmt: str = "%Y-%m-%d %H:%M") -> str:
         return "—"
     moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
     return moment.astimezone(BJ).strftime(fmt)
+
+
+def _outline_center(report_data: dict[str, Any]) -> tuple[float, float] | None:
+    """AOI 轮廓的简单平均中心，用于给薄弱区一个“西南/东北”这类方位。"""
+
+    outline = report_data.get("aoi_outline") or []
+    points = [(float(item[1]), float(item[0])) for item in outline if len(item) >= 2]
+    if not points:
+        return None
+    return (
+        sum(item[0] for item in points) / len(points),
+        sum(item[1] for item in points) / len(points),
+    )
+
+
+def _compass_label(
+    lat: float, lon: float, center: tuple[float, float] | None
+) -> str:
+    if center is None:
+        return ""
+    center_lat, center_lon = center
+    dlat = lat - center_lat
+    dlon = (lon - center_lon) * math.cos(math.radians(center_lat))
+    if abs(dlat) < 0.01 and abs(dlon) < 0.01:
+        return "中部"
+    bearing = math.degrees(math.atan2(dlon, dlat)) % 360.0
+    labels = ["北", "东北", "东", "东南", "南", "西南", "西", "西北"]
+    return labels[int((bearing + 22.5) // 45.0) % len(labels)]
+
+
+def _decorate_weak_areas(
+    weak: list[dict[str, Any]],
+    city: dict[str, Any],
+    report_data: dict[str, Any],
+) -> None:
+    """把 ``330100:-29:-2:0`` 换成用户能读懂的“西南 · 经纬度”。"""
+
+    center = _outline_center(report_data)
+    city_name = str(city.get("name") or "").rstrip("市")
+    for item in weak:
+        lat = item.get("representative_lat")
+        lon = item.get("representative_lon")
+        if lat is None or lon is None:
+            item["location_label"] = str(item.get("grid_id") or "—")
+            item["coord_label"] = ""
+            continue
+        direction = _compass_label(float(lat), float(lon), center)
+        item["location_label"] = f"{city_name}{direction}" if city_name else direction
+        item["coord_label"] = f"{float(lat):.3f}°N, {float(lon):.3f}°E"
 
 
 def report_root() -> Path:
@@ -152,8 +203,20 @@ def render_report(result: dict[str, Any], run_id: str | None = None) -> str:
             }
         )
 
+    segment_counts = Counter(
+        item.get("norad_id") or item.get("satellite") for item in passes
+    )
+    segment_seen: defaultdict[Any, int] = defaultdict(int)
+    for item in passes:
+        key = item.get("norad_id") or item.get("satellite")
+        segment_seen[key] += 1
+        item["segment_index"] = segment_seen[key]
+        item["segment_count"] = segment_counts[key]
+    has_multi_segment = any(item["segment_count"] > 1 for item in passes)
+
     weak = list(result.get("weak_areas") or [])[:10]
     city = result.get("city") or {}
+    _decorate_weak_areas(weak, city, report_data)
     start = (result.get("input_summary") or {}).get("start_utc")
     end = (result.get("input_summary") or {}).get("end_utc")
     window = result.get("window") or {}
@@ -218,6 +281,7 @@ def render_report(result: dict[str, Any], run_id: str | None = None) -> str:
         cards=cards,
         sats=sats,
         passes=passes,
+        has_multi_segment=has_multi_segment,
         weak=weak,
         notes=_notes(result),
         map_json=_map_json(report_data),

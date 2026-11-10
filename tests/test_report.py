@@ -73,6 +73,8 @@ def fake_result() -> dict:
         "weak_areas": [
             {
                 "grid_id": "330100:0:0:0",
+                "representative_lat": 29.424269,
+                "representative_lon": 118.531438,
                 "area_km2": 25.0,
                 "temporal_coverage_pct": 0.0,
                 "mrt_minutes": 480.0,
@@ -88,7 +90,18 @@ def test_render_report_contains_four_sections() -> None:
     result["targets"] = {"temporal_coverage_pct": 90.0, "area_pct": 90.0}
     result["summary_cards"]["qualified_area_pct"] = 80.0
     html = render_report(result)
-    for text in ["卫星构成", "覆盖与回放", "推荐计划", "口径与精度", "薄弱区", "杭州市", "GF-1"]:
+    for text in [
+        "卫星构成",
+        "覆盖与回放",
+        "推荐计划",
+        "口径与精度",
+        "薄弱区",
+        "杭州市",
+        "GF-1",
+        "位置",
+        "杭州西南",
+        "29.424°N, 118.531°E",
+    ]:
         assert text in html
     assert "MAP_DATA" not in html
     assert "目标 90%" in html
@@ -151,3 +164,18 @@ def test_task1_report_uses_area_target_and_hides_temporal_strip() -> None:
     assert "达标面积（目标 90%）" in html
     assert "单格时间覆盖率" not in html
     assert "至少成像一次" in html
+
+
+def test_report_labels_repeated_satellite_pass_segments() -> None:
+    result = fake_result()
+    result["operation"] = "task_2_min_satellites_mrt"
+    result["targets"] = {"temporal_coverage_pct": 90.0, "area_pct": 90.0}
+    first = dict(result["city_pass_window_table"][0])
+    second = dict(first)
+    second["start_utc"] = "2026-11-05T03:00:00Z"
+    second["end_utc"] = "2026-11-05T03:05:00Z"
+    result["city_pass_window_table"] = [first, second]
+    html = render_report(result, "run-segments")
+    assert "第 1/2 段" in html
+    assert "第 2/2 段" in html
+    assert "不是重复选星" in html

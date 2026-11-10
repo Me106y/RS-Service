@@ -140,6 +140,8 @@ pre.err{background:#1a0f0f;border:1px solid #43201d;color:#f0b4ad;padding:14px;b
 .sat-cell .rank{font-family:var(--mono);font-size:11px;color:var(--dim);letter-spacing:.06em}
 .sat-cell .sat-name{font-weight:600;color:var(--txt)}
 .sat-cell .sat-id{flex-basis:100%;margin-left:24px;font-family:var(--mono);font-size:11px;color:var(--dim)}
+td .sub{display:block;margin-top:2px;font-family:var(--mono);font-size:11px;color:var(--dim)}
+td .seg{display:inline-block;margin-left:7px;padding:1px 6px;border:1px solid var(--line);border-radius:999px;font-size:10px;color:var(--muted);vertical-align:1px}
 .purchase .swatch{vertical-align:0}
 .purchase td.num,.purchase th.num{white-space:nowrap}
 .purchase .pct{font-family:var(--mono);font-variant-numeric:tabular-nums}
@@ -311,9 +313,10 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
     </div>
     {% if show_weak %}
     <h2>薄弱区</h2>
-    <table><thead><tr><th>网格</th><th class="num">面积</th>{% if show_weak_metrics %}<th class="num">时间覆盖率</th><th class="num">MRT</th>{% endif %}</tr></thead><tbody>
-    {% for w in weak %}<tr><td class="mono">{{ w.grid_id }}</td><td class="num">{{ "%.1f"|format(w.area_km2) }} km²</td>{% if show_weak_metrics %}<td class="num">{{ "%.1f"|format(w.temporal_coverage_pct) }}%</td><td class="num">{{ "%.1f"|format(w.mrt_minutes) }} min</td>{% endif %}</tr>{% endfor %}
+    <table><thead><tr><th>位置</th><th class="num">面积</th>{% if show_weak_metrics %}<th class="num">时间覆盖率</th><th class="num">MRT</th>{% endif %}</tr></thead><tbody>
+    {% for w in weak %}<tr><td><strong>{{ w.location_label }}</strong>{% if w.coord_label %}<span class="sub">{{ w.coord_label }}</span>{% endif %}</td><td class="num">{{ "%.1f"|format(w.area_km2) }} km²</td>{% if show_weak_metrics %}<td class="num">{{ "%.1f"|format(w.temporal_coverage_pct) }}%</td><td class="num">{{ "%.1f"|format(w.mrt_minutes) }} min</td>{% endif %}</tr>{% endfor %}
     </tbody></table>
+    <p class="lede">位置按网格中心的经纬度与城市轮廓中心方位近似，不是行政区边界。</p>
     {% endif %}
   </section>
 
@@ -321,8 +324,9 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
     <h2>推荐计划</h2>
     <p class="lede">求解状态 <b>{{ optimality }}</b>；可行性 <b>{{ "是" if feasible else "否" }}</b>。下表是选中卫星在本窗口内的过境窗口。</p>
     <table><thead><tr><th>卫星</th><th>开始</th><th>结束</th><th class="num">时长</th><th class="num">平均覆盖</th><th class="num">最大覆盖</th></tr></thead><tbody>
-    {% for p in passes %}<tr><td>{{ p.satellite }}</td><td class="mono">{{ p.start_label }}</td><td class="mono">{{ p.end_label }}</td><td class="num">{{ "%.1f"|format(p.duration_minutes) }} min</td><td class="num">{{ "%.2f"|format(p.average_covered_area_pct) }}%</td><td class="num">{{ "%.2f"|format(p.maximum_covered_area_pct) }}%</td></tr>{% endfor %}
+    {% for p in passes %}<tr><td>{{ p.satellite }}{% if p.segment_count > 1 %}<span class="seg">第 {{ p.segment_index }}/{{ p.segment_count }} 段</span>{% endif %}</td><td class="mono">{{ p.start_label }}</td><td class="mono">{{ p.end_label }}</td><td class="num">{{ "%.1f"|format(p.duration_minutes) }} min</td><td class="num">{{ "%.2f"|format(p.average_covered_area_pct) }}%</td><td class="num">{{ "%.2f"|format(p.maximum_covered_area_pct) }}%</td></tr>{% endfor %}
     </tbody></table>
+    {% if has_multi_segment %}<p class="lede">同一颗卫星可能有两段可见窗口（中间有短暂空档），因此分段列出；这不是重复选星。</p>{% endif %}
     {% if purchase_run_id %}
     <div class="buy-row"><a class="buy" href="/purchase/{{ purchase_run_id }}">购买本方案</a></div>
     {% endif %}
