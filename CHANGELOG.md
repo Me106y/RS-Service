@@ -2,6 +2,12 @@
 
 RS-Service 的用户可见变化。版本规则见 [VERSIONING.md](https://github.com/Me106y/SIRIAgent/blob/main/docs/VERSIONING.md)。
 
+## [1.4.2] - 2026-11-11
+
+### Fixed
+
+- 云量过滤不再用一个 AOI 质心点代表整个区域：按 AOI 内最多 4×4 个网格代表点取 Open-Meteo 云量，逐网格剔除 >70% 的访问。修复杭州这类跨 1° 以上区域“西部山区阴雨把东部晴空窗口一起判死”的问题；此前 task1 在 72h→168h 扩窗后出现选中 0 颗、达标面积 0.0%。
+
 ## [1.4.1] - 2026-11-10
 
 ### Fixed

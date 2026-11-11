@@ -49,6 +49,58 @@ def series_for(lat: float, lon: float, start: datetime, hours: int):
     return _fetch(lat, lon, start, hours)
 
 
+def _parse_series(item: dict) -> list[tuple[datetime, float]]:
+    times = item.get("hourly", {}).get("time", [])
+    values = item.get("hourly", {}).get("cloud_cover", [])
+    series = []
+    for t, v in zip(times, values, strict=False):
+        if v is None:
+            continue
+        series.append((datetime.fromisoformat(t).replace(tzinfo=UTC), float(v)))
+    return series
+
+
+def series_for_many(
+    points: list[tuple[float, float]], start: datetime, hours: int
+) -> list[list[tuple[datetime, float]]]:
+    """一次请求多个坐标的云量序列；返回顺序与 ``points`` 一致。
+
+    网格代表点通常有几十个，逐点请求会被 Open-Meteo 限流；多坐标接口把
+    ``latitude`` / ``longitude`` 用逗号拼起来，一次返回数组。
+    """
+
+    if not points:
+        return []
+    cached = [
+        CACHE.get((round(lat, 2), round(lon, 2), start.strftime("%Y-%m-%dT%H"), hours))
+        for lat, lon in points
+    ]
+    if all(item is not None for item in cached):
+        return list(cached)  # type: ignore[arg-type]
+    params = {
+        "latitude": ",".join(f"{lat:.3f}" for lat, _ in points),
+        "longitude": ",".join(f"{lon:.3f}" for _, lon in points),
+        "hourly": "cloud_cover",
+        "forecast_days": min(16, max(2, math.ceil(hours / 24) + 1)),
+        "timezone": "UTC",
+    }
+    url = FORECAST + "?" + urllib.parse.urlencode(params)
+    try:
+        with urllib.request.urlopen(url, timeout=20) as resp:
+            payload = json.loads(resp.read().decode())
+    except Exception:
+        return [[] for _ in points]
+    if isinstance(payload, dict):
+        payload = [payload]
+    result: list[list[tuple[datetime, float]]] = []
+    for index, (lat, lon) in enumerate(points):
+        key = (round(lat, 2), round(lon, 2), start.strftime("%Y-%m-%dT%H"), hours)
+        series = _parse_series(payload[index]) if index < len(payload) else []
+        CACHE[key] = series
+        result.append(series)
+    return result
+
+
 def cloud_at(series, when: datetime) -> float | None:
     """线性插值取某个时刻的云量。"""
     if not series:

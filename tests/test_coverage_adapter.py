@@ -117,6 +117,48 @@ def test_cloud_filter_drops_windows_above_threshold() -> None:
     assert set(kept) == {(0, 1)}
 
 
+def test_cloud_filter_is_per_grid_not_whole_aoi() -> None:
+    """同一个过境里，东部网格用本地晴空云量，不被西部质心阴雨一起判死。"""
+
+    from types import SimpleNamespace
+
+    from rs_service.coverage_engine.adapter import _filter_windows_by_cell
+
+    start = datetime(2026, 11, 12, 2, 0, tzinfo=UTC)
+    west = SimpleNamespace(grid_index=0, start_utc=start, end_utc=start + timedelta(minutes=10))
+    east = SimpleNamespace(grid_index=1, start_utc=start, end_utc=start + timedelta(minutes=10))
+    cells = [
+        SimpleNamespace(representative_lat=29.90, representative_lon=119.47),
+        SimpleNamespace(representative_lat=30.27, representative_lon=120.16),
+    ]
+    series_points = [
+        ((29.90, 119.47), [(start, 100.0)]),
+        ((30.27, 120.16), [(start, 35.0)]),
+    ]
+    kept, dropped = _filter_windows_by_cell(
+        {(0, 0): (west,), (0, 1): (east,)}, cells, series_points, 70
+    )
+    assert dropped == 1
+    assert set(kept) == {(0, 1)}
+
+
+def test_cloud_sample_points_cover_aoi_without_centroid_bias() -> None:
+    from types import SimpleNamespace
+
+    from rs_service.coverage_engine.adapter import _cloud_sample_points
+
+    cells = [
+        SimpleNamespace(representative_lat=29.0 + lat * 0.1, representative_lon=119.0 + lon * 0.1)
+        for lat in range(8)
+        for lon in range(8)
+    ]
+    store = SimpleNamespace(grid=SimpleNamespace(cells=cells))
+    points = _cloud_sample_points(store)
+    assert 1 < len(points) <= 64
+    assert (29.0, 119.0) in points
+    assert len(set(points)) == len(points)
+
+
 def test_tle_age_hours() -> None:
     now = datetime(2026, 11, 5, 12, tzinfo=UTC)
     assert tle_age_hours("2026-11-05T06:00:00Z", now) == 6.0

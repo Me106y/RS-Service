@@ -380,32 +380,130 @@ def _filter_windows(
     return kept, dropped
 
 
+_CLOUD_SAMPLE_GRID = 8
+
+
+def _cloud_sample_points(store: Any) -> list[tuple[float, float]]:
+    """在 AOI 内按经纬度分桶取代表点，最多 4×4 个。
+
+    云量是网格预报值，用一个质心点代表整个 AOI 会把西部山区的阴雨错算到
+    东部晴空窗口上。这里只取每个经纬度桶里的一个真实网格代表点，后续按
+    网格就近取云量。
+    """
+
+    cells = list(getattr(store.grid, "cells", ()) or ())
+    if not cells:
+        return []
+    lats = [float(cell.representative_lat) for cell in cells]
+    lons = [float(cell.representative_lon) for cell in cells]
+    lat0, lat1 = min(lats), max(lats)
+    lon0, lon1 = min(lons), max(lons)
+    lat_span = max(lat1 - lat0, 1e-9)
+    lon_span = max(lon1 - lon0, 1e-9)
+    buckets: dict[tuple[int, int], tuple[float, float]] = {}
+    for cell in cells:
+        lat = float(cell.representative_lat)
+        lon = float(cell.representative_lon)
+        row = min(
+            _CLOUD_SAMPLE_GRID - 1,
+            max(0, int((lat - lat0) / lat_span * _CLOUD_SAMPLE_GRID)),
+        )
+        col = min(
+            _CLOUD_SAMPLE_GRID - 1,
+            max(0, int((lon - lon0) / lon_span * _CLOUD_SAMPLE_GRID)),
+        )
+        buckets.setdefault((row, col), (lat, lon))
+    return list(buckets.values())
+
+
+def _filter_windows_by_cell(
+    windows: dict[tuple[int, int], tuple[Any, ...]],
+    cells: Any,
+    series_points: list[tuple[tuple[float, float], list[tuple[datetime, float]]]],
+    threshold_pct: float,
+) -> tuple[dict[tuple[int, int], tuple[Any, ...]], int]:
+    """逐网格用最近的采样点云量剔除访问。
+
+    同一个网格只找一次最近采样点；同一采样点的 10 分钟桶只插值一次。
+    """
+
+    kept: dict[tuple[int, int], tuple[Any, ...]] = {}
+    dropped = 0
+    nearest: dict[int, int] = {}
+    cache: dict[tuple[int, datetime], float | None] = {}
+    for key, items in windows.items():
+        keep = []
+        for window in items:
+            grid_index = int(window.grid_index)
+            sample_index = nearest.get(grid_index)
+            if sample_index is None:
+                cell = cells[grid_index]
+                lat = float(cell.representative_lat)
+                lon = float(cell.representative_lon)
+                sample_index = min(
+                    range(len(series_points)),
+                    key=lambda index: (
+                        (series_points[index][0][0] - lat) ** 2
+                        + (series_points[index][0][1] - lon) ** 2
+                    ),
+                )
+                nearest[grid_index] = sample_index
+            series = series_points[sample_index][1]
+            middle = window.start_utc + (window.end_utc - window.start_utc) / 2
+            bucket = middle.replace(
+                minute=(middle.minute // 10) * 10, second=0, microsecond=0
+            )
+            cache_key = (sample_index, bucket)
+            if cache_key not in cache:
+                cache[cache_key] = cloud.cloud_at(series, middle)
+            value = cache[cache_key]
+            if value is not None and value > threshold_pct:
+                dropped += 1
+                continue
+            keep.append(window)
+        if keep:
+            kept[key] = tuple(keep)
+    return kept, dropped
+
+
 def _apply_cloud(
     store: Any,
     spec: PlanSpec,
-    lat: float,
-    lon: float,
     stats: dict[str, Any],
 ) -> Any:
-    series = cloud.series_for(lat, lon, spec.start_utc, max(1, int(spec.horizon_h) + 1))
-    if not series:
+    hours = max(1, int(spec.horizon_h) + 1)
+    points = _cloud_sample_points(store)
+    series_list = cloud.series_for_many(points, spec.start_utc, hours)
+    series_points = [
+        (point, series)
+        for point, series in zip(points, series_list, strict=False)
+        if series
+    ]
+    if not series_points:
         stats.update(
             filtered=False,
             reason="Open-Meteo 不可用，本次未过滤云量",
         )
         return store
-    kept, dropped = _filter_windows(store.windows, series, spec.cloud_threshold_pct)
+    kept, dropped = _filter_windows_by_cell(
+        store.windows,
+        store.grid.cells,
+        series_points,
+        spec.cloud_threshold_pct,
+    )
     filtered = copy.copy(store)
     filtered.windows = kept
     filtered.metadata = dict(store.metadata)
     filtered.metadata["cloud"] = {
         "threshold_pct": spec.cloud_threshold_pct,
         "dropped_windows": dropped,
+        "sample_points": len(series_points),
     }
     stats.update(
         filtered=True,
         threshold_pct=spec.cloud_threshold_pct,
         dropped_windows=dropped,
+        sample_points=len(series_points),
         reason=None,
     )
     return filtered
@@ -582,8 +680,9 @@ def _annotate_result(
     ]
     if cloud_stats.get("filtered"):
         assumptions.append(
-            "云量按 Open-Meteo 逐小时 cloud_cover >"
-            f"{cloud_stats.get('threshold_pct')}% 剔除访问；云量为网格预报值，"
+            "云量按 AOI 内网格代表点的 Open-Meteo 逐小时 cloud_cover 逐网格剔除访问"
+            f"（阈值 >{cloud_stats.get('threshold_pct')}%，采样点 "
+            f"{cloud_stats.get('sample_points')} 个）；云量为网格预报值，"
             "不代表成像时刻的实测云量。"
         )
     else:
@@ -610,8 +709,8 @@ def _annotate_result(
             notes.append(f"未参与选星 {len(blocked)} 颗，原因见 blocked_satellites。")
         if cloud_stats.get("filtered"):
             notes.append(
-                "云量按 Open-Meteo 逐小时 cloud_cover "
-                f">{cloud_stats.get('threshold_pct')}% 剔除访问（丢弃窗口 "
+                "云量按 AOI 内网格代表点的 Open-Meteo 逐小时 cloud_cover 逐网格剔除访问"
+                f"（阈值 >{cloud_stats.get('threshold_pct')}%，丢弃窗口 "
                 f"{cloud_stats.get('dropped_windows')} 个）。"
             )
         else:
@@ -624,7 +723,7 @@ def _run_once(spec: PlanSpec) -> dict[str, Any]:
 
     cloud_stats: dict[str, Any] = {"filtered": False, "reason": "未启用"}
     with session_scope() as session:
-        adcode, _name, aoi, lat, lon = _resolve_aoi(session, spec)
+        adcode, _name, aoi, _lat, _lon = _resolve_aoi(session, spec)
         candidates, blocked = collect_candidates(
             session, spec.sensor_types, spec.max_resolution_m
         )
@@ -660,7 +759,7 @@ def _run_once(spec: PlanSpec) -> dict[str, Any]:
 
             def _capture(store: Any) -> Any:
                 if spec.cloud_filter:
-                    store = _apply_cloud(store, spec, lat, lon, cloud_stats)
+                    store = _apply_cloud(store, spec, cloud_stats)
                 captured["store"] = store
                 return store
 
