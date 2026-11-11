@@ -238,7 +238,7 @@ def render_report(result: dict[str, Any], run_id: str | None = None) -> str:
         "analysis_horizon_h"
     )
     window_note = (
-        f"请求 {window.get('requested_horizon_h'):g}h，自动扩窗"
+        f"请求 {window.get('requested_horizon_h'):g}h，自动扩窗到 {hours:g}h"
         if window.get("expanded") and window.get("requested_horizon_h") is not None
         else ""
     )

@@ -679,8 +679,9 @@ def _horizons(spec: PlanSpec) -> list[float]:
         "task1",
         "task_1_min_satellites_temporal",
     }:
-        # 168h 在 65 星/775 网格上会跑数分钟，自动扩窗只到 72h；7 天由用户手动选。
-        for extra in (72.0,):
+        # 72h 不够时继续扩到 7 天：TLE 超过 7 天按口径拒绝过境计算，168h 是上限。
+        # 168h 在 65 星/775 网格上要跑数分钟，任务本身异步排队，可接受。
+        for extra in (72.0, 168.0):
             if extra > spec.horizon_h + 1e-9 and all(
                 abs(extra - item) > 1e-9 for item in horizons
             ):
@@ -689,7 +690,7 @@ def _horizons(spec: PlanSpec) -> list[float]:
 
 
 def run_plan(spec: PlanSpec) -> dict[str, Any]:
-    """执行规划；task1 可自动扩窗到 72h，返回实际使用的窗口。"""
+    """执行规划；task1 可自动扩窗到 168h，返回实际使用的窗口。"""
 
     horizons = _horizons(spec)
     last: dict[str, Any] | None = None
