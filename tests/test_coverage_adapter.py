@@ -142,7 +142,7 @@ def test_run_plan_auto_expand_stops_on_first_feasible(monkeypatch) -> None:
     assert result["auto_expand"]["attempts"] == 2
 
 
-def test_run_plan_auto_expand_caps_at_72(monkeypatch) -> None:
+def test_run_plan_auto_expand_caps_at_168(monkeypatch) -> None:
     from rs_service.coverage_engine import adapter
 
     calls: list[float] = []
@@ -153,15 +153,22 @@ def test_run_plan_auto_expand_caps_at_72(monkeypatch) -> None:
 
     monkeypatch.setattr(adapter, "_run_once", fake_run)
     result = adapter.run_plan(PlanSpec(operation="task1", auto_expand=True, horizon_h=8))
-    assert calls == [8.0, 72.0]
-    assert result["window"]["used_horizon_h"] == 72.0
-    assert result["auto_expand"]["attempts"] == 2
+    assert calls == [8.0, 72.0, 168.0]
+    assert result["window"]["used_horizon_h"] == 168.0
+    assert result["auto_expand"]["attempts"] == 3
 
 
 def test_task1_auto_expand_ladder_only_for_task1() -> None:
     task1 = PlanSpec(operation="task1", auto_expand=True, horizon_h=8)
-    assert _horizons(task1) == [8.0, 72.0]
-    assert _horizons(PlanSpec(operation="task1", auto_expand=True, horizon_h=72)) == [72.0]
+    assert _horizons(task1) == [8.0, 72.0, 168.0]
+    # 请求 72h 是常见路径：必须继续扩到 7 天，而不是原地判定不可行。
+    assert _horizons(PlanSpec(operation="task1", auto_expand=True, horizon_h=72)) == [
+        72.0,
+        168.0,
+    ]
+    assert _horizons(PlanSpec(operation="task1", auto_expand=True, horizon_h=168)) == [
+        168.0
+    ]
     task2 = PlanSpec(operation="task2", auto_expand=True, horizon_h=8)
     assert _horizons(task2) == [8.0]
 

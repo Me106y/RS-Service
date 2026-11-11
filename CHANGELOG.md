@@ -2,6 +2,12 @@
 
 RS-Service 的用户可见变化。版本规则见 [VERSIONING.md](https://github.com/Me106y/SIRIAgent/blob/main/docs/VERSIONING.md)。
 
+## [1.4.1] - 2026-11-10
+
+### Fixed
+
+- task1 自动扩窗不再停在 72h：按「请求窗口 → 72h → 168h」阶梯求解（最多 3 次，最大 7 天）。修复请求 72h 时 `auto_expand` 完全不生效、3 天不达标就判不可行的问题；168h 结果 1 颗 FENGYUN 3D 即可覆盖自定义范围 100%。
+
 ## [1.4.0] - 2026-11-10
 
 ### Changed
