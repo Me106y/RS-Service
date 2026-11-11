@@ -113,9 +113,12 @@ def _notes(result: dict[str, Any]) -> list[str]:
     notes.extend(str(item) for item in result.get("warnings") or [])
     cloud = result.get("cloud") or {}
     if cloud.get("filtered"):
+        sample = cloud.get("sample_points")
+        sample_note = f"，采样点 {sample} 个" if sample else ""
         notes.append(
-            f"云量过滤：Open-Meteo 逐小时 cloud_cover >{cloud.get('threshold_pct')}% 的访问已剔除"
-            f"（丢弃窗口 {cloud.get('dropped_windows')} 个）。"
+            "云量过滤：按 AOI 内网格代表点的 Open-Meteo 逐小时 cloud_cover "
+            f">{cloud.get('threshold_pct')}% 逐网格剔除访问"
+            f"（丢弃窗口 {cloud.get('dropped_windows')} 个{sample_note}）。"
         )
     else:
         notes.append(f"云量未过滤：{cloud.get('reason') or '未启用'}。")

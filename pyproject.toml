@@ -1,6 +1,6 @@
 [project]
 name = "rs-service"
-version = "1.4.1"
+version = "1.4.2"
 description = "Ephemeris, pass and coverage service for SIRIAgent"
 readme = "README.md"
 requires-python = ">=3.12"
