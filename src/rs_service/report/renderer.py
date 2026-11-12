@@ -6,7 +6,7 @@ import json
 import math
 import os
 from collections import Counter, defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -16,13 +16,36 @@ BJ = timezone(timedelta(hours=8))
 TEMPLATES = Path(__file__).resolve().parent
 ACCURACY_NOTE = "TLE/SGP4; along-track ~1 km/day; not for sub-meter planning"
 
-OPERATION_LABELS = {
-    "task_1_min_satellites_temporal": "最少星达到覆盖率",
-    "task_2_min_satellites_mrt": "最少星达到重访",
-    "task_3_max_qualified_area": "给定星数最大化覆盖面积",
-    "task_4_min_area_quantile_mrt": "给定星数最小化面积分位 MRT",
-    "task_5_min_area_weighted_art": "给定星数最小化 ART",
+TASK_LABELS = {
+    "task1": "最少星达到覆盖率",
+    "task2": "最少星达到重访",
+    "task3": "给定星数最大化覆盖面积",
+    "task4": "给定星数最小化面积分位 MRT",
+    "task5": "给定星数最小化 ART",
 }
+
+# 旧客户端与老报告用长 slug；目录、历史分组与报告标题都只认 task1..task5。
+LEGACY_TASK_KEYS = {
+    "task_1_min_satellites_temporal": "task1",
+    "task_2_min_satellites_mrt": "task2",
+    "task_3_max_qualified_area": "task3",
+    "task_4_min_area_quantile_mrt": "task4",
+    "task_5_min_area_weighted_art": "task5",
+}
+
+OPERATION_LABELS = {
+    **TASK_LABELS,
+    **{legacy: TASK_LABELS[key] for legacy, key in LEGACY_TASK_KEYS.items()},
+}
+
+
+def task_key(operation: str | None) -> str:
+    """把长短两种 operation 归一成 task1..task5；认不出的归 other。"""
+
+    value = str(operation or "")
+    if value in TASK_LABELS:
+        return value
+    return LEGACY_TASK_KEYS.get(value, "other")
 
 
 def _bj(value: str | None, fmt: str = "%Y-%m-%d %H:%M") -> str:
@@ -346,45 +369,167 @@ def render_report(result: dict[str, Any], run_id: str | None = None) -> str:
     )
 
 
+def _round(value: Any, digits: int = 1) -> float | None:
+    try:
+        if value is None:
+            return None
+        return round(float(value), digits)
+    except (TypeError, ValueError):
+        return None
+
+
+def build_kpi(key: str, result: dict[str, Any]) -> dict[str, Any]:
+    """一份报告只对外暴露一个 KPI，口径随任务走。"""
+
+    cards = result.get("summary_cards") or {}
+    targets = result.get("targets") or {}
+    selection = (result.get("selection") or {}).get("result") or {}
+    if key == "task3":
+        pct = cards.get("covered_area_pct", cards.get("qualified_area_pct"))
+        return {
+            "key": "covered_area_pct",
+            "label": "覆盖面积",
+            "value": _round(pct),
+            "unit": "%",
+        }
+    if key == "task4":
+        seconds = selection.get("area_quantile_mrt_s")
+        target = selection.get("area_target_pct") or targets.get("area_pct") or 90.0
+        hours = float(seconds) / 3600.0 if seconds is not None else None
+        return {
+            "key": "area_quantile_mrt_s",
+            "label": f"{float(target):g}% 面积分位 MRT",
+            "value": _round(hours),
+            "unit": "h",
+        }
+    if key == "task2":
+        p95 = selection.get("p95_mrt_s")
+        if p95 is not None:
+            return {
+                "key": "p95_mrt_s",
+                "label": "P95 重访",
+                "value": _round(float(p95) / 3600.0),
+                "unit": "h",
+            }
+        return {
+            "key": "area_weighted_mrt_minutes",
+            "label": "面积加权 MRT",
+            "value": _round(cards.get("area_weighted_mrt_minutes")),
+            "unit": "分",
+        }
+    if key == "task5":
+        art = selection.get("area_weighted_art_s")
+        if art is not None:
+            return {
+                "key": "area_weighted_art_s",
+                "label": "面积加权 ART",
+                "value": _round(float(art) / 3600.0),
+                "unit": "h",
+            }
+        return {
+            "key": "area_weighted_art_minutes",
+            "label": "面积加权 ART",
+            "value": _round(cards.get("area_weighted_art_minutes")),
+            "unit": "分",
+        }
+    return {
+        "key": "qualified_area_pct",
+        "label": "达标面积",
+        "value": _round(cards.get("qualified_area_pct")),
+        "unit": "%",
+    }
+
+
+def build_meta(
+    result: dict[str, Any],
+    run_id: str,
+    *,
+    created_at: str | None = None,
+) -> dict[str, Any]:
+    """历史列表要用的精简元数据：plan.json 动辄几百 KB，列表不能每份都全读。"""
+
+    cards = result.get("summary_cards") or {}
+    city = result.get("city") or {}
+    window = result.get("input_summary") or {}
+    key = task_key(result.get("operation"))
+    area_name = str(city.get("name") or "—")
+    adcode = str(city.get("adcode") or "")
+    return {
+        "run_id": run_id,
+        "task": key,
+        "task_label": TASK_LABELS.get(key, "其他任务"),
+        "aoi_kind": (
+            "custom" if adcode.startswith("custom_") or area_name == "自定义范围" else "city"
+        ),
+        "area_name": area_name,
+        "window_start": window.get("start_utc"),
+        "window_end": window.get("end_utc"),
+        "sat_count": int(cards.get("satellite_count") or 0),
+        "kpi": build_kpi(key, result),
+        "feasible": bool(result.get("feasible")),
+        "created_at": created_at or datetime.now(UTC).isoformat(timespec="seconds"),
+    }
+
+
 def write_report(
     result: dict[str, Any],
     run_id: str,
     *,
     root: Path | None = None,
 ) -> dict[str, Any]:
+    """落盘一份报告：``<root>/<task>/<run_id>/``，并挪动根上的 latest 软链。"""
+
     target_root = Path(root) if root else report_root()
-    target = target_root / run_id
+    key = task_key(result.get("operation"))
+    target = target_root / key / run_id
     target.mkdir(parents=True, exist_ok=True)
 
     plan_path = target / "plan.json"
     plan_path.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
     report_path = target / "report.html"
     report_path.write_text(render_report(result, run_id), encoding="utf-8")
+    meta = build_meta(result, run_id)
+    meta_path = target / "meta.json"
+    meta_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
 
     latest = target_root / "latest"
+    link = Path(key) / run_id
     try:
         if latest.is_symlink() or latest.exists():
             latest.unlink()
-        latest.symlink_to(run_id, target_is_directory=True)
+        latest.symlink_to(link, target_is_directory=True)
     except OSError:
-        (target_root / "latest.txt").write_text(run_id, encoding="utf-8")
+        (target_root / "latest.txt").write_text(link.as_posix(), encoding="utf-8")
 
     siriagent_root = target_root.parents[1]
     try:
         relative = report_path.relative_to(siriagent_root).as_posix()
         relative_plan = plan_path.relative_to(siriagent_root).as_posix()
+        relative_meta = meta_path.relative_to(siriagent_root).as_posix()
     except ValueError:
         relative = str(report_path)
         relative_plan = str(plan_path)
+        relative_meta = str(meta_path)
     return {
         "run_id": run_id,
+        "task": key,
         "dir": str(target),
         "report_path": str(report_path),
         "plan_path": str(plan_path),
+        "meta_path": str(meta_path),
         "relative_report": relative,
         "relative_plan": relative_plan,
+        "relative_meta": relative_meta,
+        "meta": meta,
         "latest": str(latest),
     }
 
 
-__all__ = ["ACCURACY_NOTE", "render_report", "report_root", "write_report"]
+__all__ = [
+    "ACCURACY_NOTE",
+    "build_meta",
+    "render_report",
+    "report_root",
+    "task_key",
+    "write_report",
+]

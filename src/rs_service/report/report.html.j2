@@ -116,8 +116,7 @@ input[type=range]::-webkit-slider-runnable-track{height:3px;background:var(--lin
 input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:50%;background:var(--amber);margin-top:-4.5px;box-shadow:0 0 0 4px rgba(240,165,43,.16)}
 input[type=range]::-moz-range-track{height:3px;background:var(--line);border-radius:2px}
 input[type=range]::-moz-range-thumb{width:12px;height:12px;border:0;border-radius:50%;background:var(--amber);box-shadow:0 0 0 4px rgba(240,165,43,.16)}
-.clock{font-family:var(--mono);font-size:13px;color:var(--txt);font-variant-numeric:tabular-nums;min-width:150px;text-align:right}
-.clock .pct{color:var(--amber)}
+.clock{font-family:var(--mono);font-size:13px;color:var(--txt);font-variant-numeric:tabular-nums;min-width:96px;text-align:right}
 .legend{display:flex;flex-wrap:wrap;gap:18px;padding:12px 16px 14px;font-size:12px;color:var(--muted);border-top:1px solid var(--line-soft)}
 .legend .swatch{vertical-align:0}
 
@@ -229,6 +228,8 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
 .buy-row{margin-top:18px;display:flex;justify-content:flex-end}
 .buy{display:inline-flex;align-items:center;padding:9px 18px;border-radius:999px;background:var(--cyan);color:#03121a;font:600 13px var(--sans);text-decoration:none;box-shadow:0 6px 18px rgba(34,211,238,.18)}
 .buy:hover{filter:brightness(1.06)}
+.buy.bought{background:transparent;color:var(--muted);border:1px solid var(--line);box-shadow:none}
+.buy.bought:hover{filter:none;border-color:var(--muted)}
 </style></head><body>
 <div class="top-actions">
   <button class="theme-toggle" id="themeToggle" type="button" aria-pressed="false" aria-label="切换为浅色主题" title="切换为浅色主题">
@@ -305,7 +306,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
           <svg id="ico" viewBox="0 0 16 16"><path d="M4 2l10 6-10 6z"/></svg>
         </button>
         <input id="scrub" type="range" min="0" max="{{ events_count }}" value="0" step="1" aria-label="回放时间轴">
-        <div class="clock"><span id="now">—</span> · <span class="pct" id="pct">0%</span></div>
+        <div class="clock"><span id="now">—</span></div>
       </div>
       <div class="legend">
         {% for s in sats %}<span><span class="swatch" style="--c:{{ s.color }};--c-light:{{ s.color_light }}"></span>{{ s.name }}</span>{% endfor %}
@@ -329,7 +330,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
     </tbody></table>
     {% if has_multi_segment %}<p class="lede">同一颗卫星可能有两段可见窗口（中间有短暂空档），因此分段列出；这不是重复选星。</p>{% endif %}
     {% if purchase_run_id %}
-    <div class="buy-row"><a class="buy" href="/purchase/{{ purchase_run_id }}">购买本方案</a></div>
+    <div class="buy-row"><a class="buy" id="buy" data-run-id="{{ purchase_run_id }}" href="/purchase/{{ purchase_run_id }}">购买本方案</a></div>
     {% endif %}
   </section>
 
@@ -347,7 +348,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
   var cv = document.getElementById('map'), ctx = cv.getContext('2d');
   var dpr = Math.min(2, window.devicePixelRatio || 1);
   var W = cv.width, H = cv.height;
-  var bb = D.bbox, ev = D.events, TOTAL = D.total;
+  var bb = D.bbox, ev = D.events;
   var pad = 46, cos = Math.cos((bb[1]+bb[3])/2*Math.PI/180);
   var dx = (bb[2]-bb[0])*cos, dy = bb[3]-bb[1];
   var sc = Math.min((W-2*pad)/dx, (H-2*pad)/dy);
@@ -355,8 +356,6 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
   function PX(lo,la){ return [ox+(lo-bb[0])*cos*sc, oy+(bb[3]-la)*sc]; }
 
   var outline = D.outline.map(function(p){ return PX(p[0],p[1]); });
-  var cum = [], acc = 0;
-  ev.forEach(function(e){ acc += e.points.length; cum.push(acc); });
 
   // 画布颜色不写死：深/浅两套都从当前主题的 CSS 变量和调色板取，切换主题时重绘。
   var THEME = {fill:'#0d1a24', stroke:'#2f4a60', empty:'#2b4557', colors:D.colors};
@@ -403,7 +402,6 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
 
   var scrub = document.getElementById('scrub');
   var nowEl = document.getElementById('now');
-  var pctEl = document.getElementById('pct');
   var btn = document.getElementById('play');
   var ico = document.getElementById('ico');
   var timer = null, idx = 0;
@@ -416,8 +414,6 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
     idx = i;
     draw(i);
     nowEl.textContent = label(i);
-    var p = i>0 ? (cum[i-1]/TOTAL*100) : 0;
-    pctEl.textContent = p.toFixed(1)+'%';
   }
 
   scrub.addEventListener('input', function(){ stop(); paint(+scrub.value); });
@@ -508,4 +504,29 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
   requestAnimationFrame(function(){ cv.style.opacity = 1; });
 })();
 </script>
+{% if purchase_run_id %}
+<script>
+// 报告是静态 HTML，购买发生在生成之后：加载时问一次 SIRIAgent 的购买记录，
+// 已买过就把按钮换成「已购买」并链到那张购买单，避免重复建单。
+(function(){
+  var link = document.getElementById('buy');
+  if (!link || !window.fetch) return;
+  var runId = link.getAttribute('data-run-id');
+  fetch('/api/purchases', {headers: {'Accept': 'application/json'}})
+    .then(function(res){ return res.ok ? res.json() : null; })
+    .then(function(payload){
+      var items = (payload && payload.items) || [];
+      for (var i = 0; i < items.length; i++){
+        if (items[i].run_id !== runId) continue;
+        link.textContent = '已购买';
+        link.href = '/purchase/' + items[i].purchase_id;
+        link.title = '购买单 ' + items[i].purchase_id;
+        link.classList.add('bought');
+        return;
+      }
+    })
+    .catch(function(){ /* 离线打开报告时没有后端，保持原按钮 */ });
+})();
+</script>
+{% endif %}
 </body></html>

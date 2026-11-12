@@ -105,7 +105,7 @@ uv pip install --python .venv/bin/python -e ".[dev]"
 
 - 只绑 `127.0.0.1`，不暴露公网；公网访问统一经 SIRIAgent。
 - 成图范围仅限浙江省内；目录不含 SAR 星。
-- 成图任务状态在进程内，重启会丢失排队任务；`reports/imaging-plan/` 下已生成的报告保留，`latest` 指向最近一次。
+- 成图任务状态在进程内，重启会丢失排队任务；报告按任务落在 `reports/imaging-plan/<task>/<run_id>/`，`latest` 指向最近一次。
 - 任务并发受进程内单队列限制。
 
 ## 文档

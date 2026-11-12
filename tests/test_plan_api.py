@@ -76,6 +76,46 @@ def test_report_endpoint_renders_html(monkeypatch, tmp_path) -> None:
     report = client.post(f"/api/v1/plans/{job_id}/report")
     assert report.status_code == 200
     assert report.json()["relative_report"].endswith("report.html")
+    assert report.json()["task"] == "task1"
     html = client.get(f"/api/v1/plans/{job_id}/report")
     assert html.status_code == 200
     assert "卫星构成" in html.text
+
+
+def test_plans_history_lists_written_reports(monkeypatch, tmp_path) -> None:
+    from rs_service.report import write_report
+    from tests.test_report import fake_result
+
+    monkeypatch.setenv("RS_REPORT_DIR", str(tmp_path))
+    write_report(fake_result(), "run-history")
+    client = TestClient(create_app())
+    response = client.get("/api/v1/plans/history")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["total"] == 1
+    assert body["by_task"] == {"task1": 1}
+    assert body["runs"][0]["run_id"] == "run-history"
+    assert body["runs"][0]["relative_report"].endswith("task1/run-history/report.html")
+    # 旧的平铺路径已经不存在：GET report 也按 task 子目录找
+    assert client.get("/api/v1/plans/run-history/report").status_code == 200
+
+
+def test_plans_history_filters_by_operation(monkeypatch, tmp_path) -> None:
+    from rs_service.report import write_report
+    from tests.test_report import fake_result
+
+    monkeypatch.setenv("RS_REPORT_DIR", str(tmp_path))
+    write_report(fake_result(), "run-task1")
+    task3 = fake_result()
+    task3["operation"] = "task_3_max_qualified_area"
+    write_report(task3, "run-task3")
+    client = TestClient(create_app())
+    body = client.get("/api/v1/plans/history", params={"operation": "task3"}).json()
+    assert [run["run_id"] for run in body["runs"]] == ["run-task3"]
+    assert body["total"] == 1
+    # 短 slug 与旧长 slug 等价
+    legacy = client.get(
+        "/api/v1/plans/history", params={"operation": "task_3_max_qualified_area"}
+    ).json()
+    assert [run["run_id"] for run in legacy["runs"]] == ["run-task3"]
