@@ -62,6 +62,19 @@ curl -s http://127.0.0.1:8766/api/v1/satellites/40118
 - `rs-service-sync.timer` 每天 03:00 同步；TLE 过期时先跑一次 `rs-service sync`。
 - 任务状态在进程内；重启丢任务，`reports/imaging-plan/<job_id>/` 下的报告文件保留，`latest` 指向最近一次。
 
+## 遥感解译 `/api/v1/interpret`
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/interpret/images` | 购买 / 上传 / 示例图清单（kind/group/name/path/宽高） |
+| POST | `/interpret/change-detection` | 变化检测（FlickCD，双图）；`{before_path, after_path}` |
+| POST | `/interpret/object-detection` | 目标检测（YOLOX-S COCO 80 类，单图）；`{image_path}` |
+
+- 路径只允许 `workspace/` 或 `demo/` 下；越界 403、文件不存在 422、变化检测超时 504。
+- 结果写 `SIRIAgent/reports/interpret/<run_id>/`（`mask.png` / `object_annotated.png` / `result.json`）。
+- 每个响应带 `accuracy_note`；目标检测 `accuracy_note` 为「YOLOX-S 估计（阈值 0.25 / NMS 0.45），结果需人工复核；输入限制最大边 2048」。
+- 目标检测权重 `data/models/object_detection/yolox_s.pth`（Megvii 官方 COCO 预训练，Apache-2.0，约 68.7MB）不入库，用 `.venv/bin/python scripts/fetch_models.py yolox` 拉取（ghproxy 镜像 + SHA256 校验）。
+
 ## MCP（Streamable HTTP）
 
 启动：`rs-service serve-mcp --port 8765`，端点为 `http://127.0.0.1:8765/mcp`。
@@ -77,6 +90,9 @@ DSH 侧工具名带前缀：`mcp__rs-service__<tool>`。
 | `current_position` | `sat_id` | 当前星下点 |
 | `sync_status` | — | 最近同步、重试状态、TLE 最大年龄 |
 | `list_aoi` | `level?`, `query?` | 浙江省级 / 市级 / 区县 AOI（adcode、名称、bbox、面积） |
+| `list_workspace_images` | — | 购买 / 上传 / 示例图清单 |
+| `detect_change` | `before_path`, `after_path` | 掩膜路径、变化像素/占比、连通域、耗时、`accuracy_note` |
+| `detect_objects` | `image_path` | 标注图路径、目标数/类别数、检测框列表、耗时、`accuracy_note` |
 
 后续工具（`get_tle`、`propagate`、`run_command`）按需求文档 §5.2 逐步补齐；每个工具同时更新本文件与 `COMMANDS.md`。
 

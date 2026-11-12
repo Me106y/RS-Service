@@ -2,6 +2,18 @@
 
 RS-Service 的用户可见变化。版本规则见 [VERSIONING.md](https://github.com/Me106y/SIRIAgent/blob/main/docs/VERSIONING.md)。
 
+## [1.5.0] - 2026-11-12
+
+### Added
+
+- 遥感解译新增**目标检测**：YOLOX-S + COCO 80 类官方预训练（Apache-2.0），REST `POST /api/v1/interpret/object-detection` 与 MCP 工具 `detect_objects`；返回标注图、目标数/类别数/置信度统计、检测框列表与 `accuracy_note`。
+- 解译路径根从 `workspace/` 扩到 `workspace/` + `demo/`；`/interpret/images` 与 `list_workspace_images` 增加 `kind=demo` 示例图。
+- 权重按需拉取：`scripts/fetch_models.py yolox`（ghproxy 镜像 + SHA256 校验），权重不入库。
+
+### Changed
+
+- `warmup_safe` 在权重存在时预热目标检测模型。
+
 ## [1.4.2] - 2026-11-11
 
 ### Fixed

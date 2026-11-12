@@ -237,6 +237,22 @@ def detect_change(before_path: str, after_path: str) -> dict[str, Any]:
         return {"ok": False, "error": type(exc).__name__, "message": str(exc)}
 
 
+@mcp.tool()
+def detect_objects(image_path: str) -> dict[str, Any]:
+    """Run YOLOX-S object detection synchronously on one workspace/demo image.
+
+    Paths are relative to the SIRIAgent root and must stay under workspace/ or demo/.
+    Returns the annotated image path, detection count/classes, boxes, elapsed time
+    and an accuracy note.
+    """
+    try:
+        return interpret_service.run_object_detection(image_path)
+    except PermissionError as exc:
+        return {"ok": False, "error": "forbidden", "message": str(exc)}
+    except (ValueError, FileNotFoundError) as exc:
+        return {"ok": False, "error": type(exc).__name__, "message": str(exc)}
+
+
 def run_server(host: str | None = None, port: int | None = None) -> None:
     interpret_service.warmup_safe()
     mcp.run(

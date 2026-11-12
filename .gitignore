@@ -17,3 +17,7 @@ backups/
 .ruff_cache/
 .mypy_cache/
 .DS_Store
+
+# 解译模型权重（体积大，按 scripts/fetch_models.py 拉取并校验）
+data/models/object_detection/*.pth
+data/models/semantic_segmentation/*.onnx

@@ -1,4 +1,4 @@
-"""变化检测服务：工作区图像清单、路径校验、结果落盘。"""
+"""解译服务：图像清单、路径校验、结果落盘（变化检测 / 目标检测 / 语义分割 / 图像处理）。"""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from . import infer
+from . import infer, object_detect
 
 log = logging.getLogger("rs_service.interpret")
 
@@ -23,12 +23,19 @@ SIRIAGENT_ROOT = Path(
 WORKSPACE = SIRIAGENT_ROOT / "workspace"
 IMAGES = WORKSPACE / "images"
 UPLOADS = WORKSPACE / "uploads"
+DEMO = SIRIAGENT_ROOT / "demo" / "images"
 REPORT_ROOT = SIRIAGENT_ROOT / "reports" / "interpret"
 MODEL_PATH = PROJECT_ROOT / "data" / "models" / "change_detection" / "best_model.pth"
+OBJECT_MODEL_PATH = PROJECT_ROOT / "data" / "models" / "object_detection" / "yolox_s.pth"
+ALLOWED_ROOTS = (WORKSPACE, DEMO)
 ALLOWED_SUFFIXES = {".png", ".jpg", ".jpeg"}
 ACCURACY_NOTE = (
     "变化检测为 FlickCD 模型估计（256 滑窗、阈值 0.5），结果需人工复核；"
     "输入限制最大边 2048。"
+)
+OBJECT_ACCURACY_NOTE = (
+    "目标检测为 YOLOX-S（COCO 80 类预训练）估计，置信度阈值 0.25 / NMS 0.45，"
+    "结果需人工复核；输入限制最大边 2048。"
 )
 BJ = timezone(timedelta(hours=8))
 
@@ -54,6 +61,12 @@ def warmup_safe() -> None:
         log.info("interpret model warmup ok device=%s", device())
     except Exception as exc:  # noqa: BLE001 - 预加载失败不阻塞星历服务
         log.warning("interpret model warmup failed: %s", exc)
+    try:
+        if OBJECT_MODEL_PATH.is_file():
+            object_detect.warmup(str(OBJECT_MODEL_PATH), device())
+            log.info("object detection model warmup ok")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("object detection warmup failed: %s", exc)
 
 
 def _png_size(path: Path) -> tuple[int, int] | None:
@@ -73,9 +86,9 @@ def _relative(path: Path) -> str:
 
 
 def list_workspace_images() -> list[dict[str, Any]]:
-    """列出购买与上传的图像；只给元数据，不返回二进制。"""
+    """列出购买、上传与示例图；只给元数据，不返回二进制。"""
     items: list[dict[str, Any]] = []
-    for base, kind in ((IMAGES, "purchase"), (UPLOADS, "upload")):
+    for base, kind in ((IMAGES, "purchase"), (UPLOADS, "upload"), (DEMO, "demo")):
         if not base.is_dir():
             continue
         for folder in sorted(base.iterdir()):
@@ -108,20 +121,63 @@ def _resolve_image(raw: str) -> Path:
         resolved = candidate.resolve(strict=True)
     except (OSError, RuntimeError) as exc:
         raise FileNotFoundError(f"图像不存在：{raw}") from exc
-    if not resolved.is_relative_to(WORKSPACE):
-        raise PermissionError("只允许读取 workspace/ 下的图像。")
+    if not any(resolved.is_relative_to(root) for root in ALLOWED_ROOTS):
+        raise PermissionError("只允许读取 workspace/ 或 demo/ 下的图像。")
     if not resolved.is_file() or resolved.suffix.lower() not in ALLOWED_SUFFIXES:
         raise ValueError("只支持 PNG / JPG 图像。")
     return resolved
+
+
+def _new_run_id() -> tuple[str, Path]:
+    run_id = f"int-{datetime.now(BJ):%Y%m%d%H%M%S}-{secrets.token_hex(3)}"
+    output_dir = REPORT_ROOT / run_id
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return run_id, output_dir
+
+
+def run_object_detection(image_path: str) -> dict[str, Any]:
+    """同步执行一次目标检测，结果写到 SIRIAgent 的 reports/interpret/。"""
+    image = _resolve_image(image_path)
+    if not OBJECT_MODEL_PATH.is_file():
+        raise FileNotFoundError(f"目标检测权重不存在：{OBJECT_MODEL_PATH}")
+    run_id, output_dir = _new_run_id()
+    result = object_detect.detect(
+        image,
+        OBJECT_MODEL_PATH,
+        device=device(),
+        max_side=object_detect.MAX_SIDE,
+    )
+    annotated_path = output_dir / "object_annotated.png"
+    object_detect.write_png(annotated_path, result.pop("annotated"))
+    payload: dict[str, Any] = {
+        "ok": True,
+        "run_id": run_id,
+        "image_path": _relative(image),
+        "annotated_path": _relative(annotated_path),
+        "width": result["width"],
+        "height": result["height"],
+        "count": result["count"],
+        "class_count": result["class_count"],
+        "classes": result["classes"],
+        "score_mean": result["score_mean"],
+        "score_min": result["score_min"],
+        "detections": result["detections"],
+        "resized": result["resized"],
+        "elapsed_ms": result["elapsed_ms"],
+        "device": result["device"],
+        "accuracy_note": OBJECT_ACCURACY_NOTE,
+    }
+    (output_dir / "result.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    return payload
 
 
 def run_change_detection(before_path: str, after_path: str) -> dict[str, Any]:
     """同步执行一次变化检测，结果写到 SIRIAgent 的 reports/interpret/。"""
     before = _resolve_image(before_path)
     after = _resolve_image(after_path)
-    run_id = f"int-{datetime.now(BJ):%Y%m%d%H%M%S}-{secrets.token_hex(3)}"
-    output_dir = REPORT_ROOT / run_id
-    output_dir.mkdir(parents=True, exist_ok=True)
+    run_id, output_dir = _new_run_id()
 
     result = infer.detect(
         before,
