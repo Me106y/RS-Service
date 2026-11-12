@@ -581,6 +581,25 @@ def execute_request(
             "Targeted 区域指向自动锁定所有保留网格代表点的面积加权形心；"
             "它表示整座区域共用一个跟踪目标，不表示每个网格点都能同时独立转轴。"
         )
+    failures = store.metadata.get("propagation_failures") or []
+    if failures:
+        names = "、".join(
+            f"{item.get('name') or item.get('norad_id')}（{item.get('norad_id')}）"
+            for item in failures
+        )
+        assumptions.append(
+            f"以下卫星的 TLE 在本次时间窗内 SGP4 传播失败（多为轨道已衰减），"
+            f"已从机会计算中跳过：{names}。"
+        )
+    partial = store.metadata.get("partial_propagation_failures") or []
+    if partial:
+        names = "、".join(
+            f"{item.get('name') or item.get('norad_id')}（{item.get('norad_id')}）"
+            for item in partial
+        )
+        assumptions.append(
+            f"以下卫星在时间窗末段 TLE 已衰减、SGP4 传播失败，该时段按不可覆盖处理：{names}。"
+        )
     assumptions.extend(
         [
             "结果表示固定 Profile 下的几何观测机会，不包含云量、任务排程和姿态行为优化。",

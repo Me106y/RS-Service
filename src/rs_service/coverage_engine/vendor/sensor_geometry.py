@@ -585,8 +585,17 @@ def compute_covered_series_complex(sat, t, dt_list, region, cfg):
     jdi = np.floor(jd)
     jdf = jd - jdi
     err, r_teme, v_teme = sat.model.sgp4_array(jdi, jdf)
-    if np.any(err):
-        raise RuntimeError(f"SGP4 传播失败（NORAD {getattr(sat, 'norad_id', '?')}）：错误码 {err}")
+    valid = np.asarray(err == 0)
+    if not valid.any():
+        raise RuntimeError(
+            f"SGP4 传播失败（NORAD {getattr(sat, 'norad_id', '?')}）：错误码 {err}"
+        )
+    if not valid.all():
+        # 部分时刻传播失败（TLE 已衰减）：用最近有效状态填充，覆盖判定随后按 valid 掩掉。
+        nearest = np.maximum.accumulate(np.where(valid, np.arange(len(valid)), -1))
+        nearest[nearest < 0] = int(np.argmax(valid))
+        r_teme = np.asarray(r_teme)[nearest]
+        v_teme = np.asarray(v_teme)[nearest]
     gmst = np.radians(np.asarray(t.gmst, dtype=float) * 15.0)
     r = rot_z_array(gmst, r_teme)           # ECEF 位置
     v_in = rot_z_array(gmst, v_teme)        # 惯性速度在地固系坐标
@@ -627,6 +636,7 @@ def compute_covered_series_complex(sat, t, dt_list, region, cfg):
             sun_c = sun if sun is not None else rot_z_array(gmst, sun_vector_eci(jd))
             moon_c = rot_z_array(gmst, moon_vector_eci(jd))
             covered &= check_constraints(cons, P, r, v, b, u, sun_c, moon_c, dt_sec)
+        covered &= valid
         ratio = covered.astype(float)
         return covered, ratio
 
@@ -666,6 +676,8 @@ def compute_covered_series_complex(sat, t, dt_list, region, cfg):
                                      target=P0, dt_sec=dt_sec, jd=jd)
         u0 = normalize(P0 - r)
         any_cov &= check_constraints(cons, P0, r, v, b0, u0, sun_c, moon_c, dt_sec)
+    any_cov &= valid
+    ratio = np.where(valid, ratio, 0.0)
     return any_cov, ratio
 
 

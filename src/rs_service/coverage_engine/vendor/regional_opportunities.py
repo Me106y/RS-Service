@@ -143,6 +143,14 @@ def _half_open_times(start: datetime, end: datetime, step_s: int) -> list[dateti
     return values
 
 
+class SatellitePropagationError(RuntimeError):
+    """单颗卫星 SGP4 传播失败；调用方应跳过该星而不是让整个规划失败。"""
+
+    def __init__(self, sat_id: int | str, message: str) -> None:
+        super().__init__(message)
+        self.sat_id = sat_id
+
+
 def _sat_id(sat: Any) -> int:
     """兼容 satellite_loader.Satellite 和原生 EarthSatellite。"""
 
@@ -289,8 +297,20 @@ def _prepare_ecef_geometry(
     jdi = np.floor(jd)
     jdf = jd - jdi
     err, r_teme, v_teme = sat.model.sgp4_array(jdi, jdf)
-    if np.any(err):
-        raise RuntimeError(f"SGP4 传播失败（NORAD {_sat_id(sat)}）：错误码 {err}")
+    valid = np.asarray(err == 0)
+    if not valid.any():
+        raise SatellitePropagationError(
+            _sat_id(sat), f"SGP4 传播失败（NORAD {_sat_id(sat)}）：错误码 {err}"
+        )
+    if not valid.all():
+        # 部分时刻传播失败（多为 TLE 已衰减）：用最近的有效状态填充几何输入，
+        # 再用 valid 掩码把这些时刻的覆盖判定强制为 False，避免整颗星拖垮规划。
+        nearest = np.maximum.accumulate(
+            np.where(valid, np.arange(len(valid)), -1)
+        )
+        nearest[nearest < 0] = int(np.argmax(valid))
+        r_teme = np.asarray(r_teme)[nearest]
+        v_teme = np.asarray(v_teme)[nearest]
     gmst = np.radians(np.asarray(t.gmst, dtype=float) * 15.0)
     r = sg.rot_z_array(gmst, r_teme)
     v_in = sg.rot_z_array(gmst, v_teme)
@@ -327,6 +347,7 @@ def _prepare_ecef_geometry(
     )
     axes = sg.sensor_frame_axes(b, v)
     return {
+        "valid": valid,
         "r": r,
         "v": v,
         "b": b,
@@ -472,6 +493,9 @@ def _complex_state_for_points(
                 moon,
                 prepared["dt_sec"],
             )
+    valid = prepared.get("valid")
+    if valid is not None:
+        covered &= np.asarray(valid, dtype=bool)[:, None]
     return covered
 
 
@@ -526,6 +550,7 @@ def _prepare_simple_geometry(sat: Any, t: Any) -> dict[str, np.ndarray]:
 
     sub = sat.at(t).subpoint()
     return {
+        "valid": np.ones(len(np.atleast_1d(sub.latitude.degrees)), dtype=bool),
         "sat_lat": np.asarray(sub.latitude.degrees, dtype=float),
         "sat_lon": np.asarray(sub.longitude.degrees, dtype=float),
         "altitude": np.asarray(sub.elevation.km, dtype=float),
@@ -1005,22 +1030,45 @@ def compute_regional_opportunities(
         else None
     )
     windows: dict[tuple[int, int], tuple[AccessWindow, ...]] = {}
+    propagation_failures: list[dict[str, Any]] = []
+    partial_failures: list[dict[str, Any]] = []
     for sat_index, sat in enumerate(satellites):
         sat_id = _sat_id(sat)
         sat_name = _sat_name(sat)
         effective_cfg = _effective_satellite_cfg(cfg, sat_id)
         # 同一颗星的轨道和姿态只准备一次；块循环只改变网格列，避免每块重复 SGP4。
-        prepared = (
-            _prepare_simple_geometry(sat, t)
-            if _is_simple_nadir(effective_cfg)
-            else _prepare_ecef_geometry(
-                sat,
-                t,
-                dt_list,
-                effective_cfg,
-                targeted=target_ecef if _is_targeted(effective_cfg) else None,
+        try:
+            prepared = (
+                _prepare_simple_geometry(sat, t)
+                if _is_simple_nadir(effective_cfg)
+                else _prepare_ecef_geometry(
+                    sat,
+                    t,
+                    dt_list,
+                    effective_cfg,
+                    targeted=target_ecef if _is_targeted(effective_cfg) else None,
+                )
             )
-        )
+        except SatellitePropagationError as exc:
+            propagation_failures.append(
+                {"norad_id": sat_id, "name": sat_name, "reason": str(exc)}
+            )
+            if progress:
+                progress(
+                    (sat_index + 1) / len(satellites),
+                    f"区域机会：{sat_name}（{sat_index + 1}/{len(satellites)}，SGP4 传播失败已跳过）",
+                )
+            continue
+        valid = prepared.get("valid")
+        if valid is not None and not bool(np.all(valid)):
+            partial_failures.append(
+                {
+                    "norad_id": sat_id,
+                    "name": sat_name,
+                    "bad_steps": int((~np.asarray(valid, dtype=bool)).sum()),
+                    "total_steps": int(len(valid)),
+                }
+            )
         indices: np.ndarray | None = None
         if prescreen_target is not None and _can_prescreen(effective_cfg):
             indices = _prescreen_time_indices(
@@ -1101,6 +1149,8 @@ def compute_regional_opportunities(
             "n_grid_cells": n_cells,
             "n_nonempty_pairs": len(windows),
             "targeting": target_info,
+            "propagation_failures": propagation_failures,
+            "partial_propagation_failures": partial_failures,
         },
     )
     refine_step_s = float(cfg.get("refine_step_seconds", 0.0) or 0.0)
