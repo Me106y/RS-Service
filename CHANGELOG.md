@@ -2,6 +2,20 @@
 
 RS-Service 的用户可见变化。版本规则见 [VERSIONING.md](https://github.com/Me106y/SIRIAgent/blob/main/docs/VERSIONING.md)。
 
+## [1.8.0] - 2026-11-12
+
+### Added
+
+- 新增 `GET /api/v1/plans/history`：按任务类型列出历史报告（`?operation=task1&limit=200`），只读 `meta.json`，返回 `runs / total / by_task`，按生成时间倒序；供 SIRIAgent 抽屉的「历史结果」使用。
+- `write_report` 额外写 `meta.json`（任务、区域、窗口、星数、KPI、生成时间），并支持自定义范围（`aoi_kind=custom`）。
+
+### Changed
+
+- 报告目录改按任务分层：`reports/imaging-plan/<task>/<run_id>/{plan.json,report.html,meta.json}`，根上 `latest` 软链指向 `<task>/<run_id>`；`GET /plans/{job_id}/report` 改为扫 `<task>/` 找 run，旧 slug 自动归一成 `task1`..`task5`。
+- 报告标题与「任务」一栏同时认短 slug（`task1`..`task5`）与旧长 slug，都会显示中文任务名。
+- 「覆盖与回放」的回放时钟只显示时间，去掉累计覆盖百分比（`#pct` 与 `cum[]` 一并删除）；推荐计划表的平均/最大覆盖、KPI 条与口径注释保持原样。
+- 报告内的「购买本方案」在加载时问一次 SIRIAgent 的购买记录：已买过就显示「已购买」并链到对应购买单，避免同一份报告重复下单。
+
 ## [1.7.1] - 2026-11-12
 
 ### Fixed

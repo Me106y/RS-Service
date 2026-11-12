@@ -44,8 +44,9 @@ curl -s http://127.0.0.1:8766/api/v1/satellites/40118
 | GET | `/plan-options` | 任务、必填/高级字段、默认值、传感器类型、AOI 列表、可规划数量 |
 | POST | `/plans` | 建任务，返回 202 + `job_id`；任务在进程内排队 |
 | GET | `/plans/{job_id}` | `queued` / `running` / `completed` / `failed` + 结果或错误 |
-| POST | `/plans/{job_id}/report` | 用已完成结果渲染四节 HTML，返回 `reports/imaging-plan/...` 相对路径 |
-| GET | `/plans/{job_id}/report` | 报告 HTML 本体 |
+| POST | `/plans/{job_id}/report` | 用已完成结果渲染四节 HTML，返回 `reports/imaging-plan/<task>/<job_id>/...` 相对路径 |
+| GET | `/plans/{job_id}/report` | 报告 HTML 本体（按 `run_id` 扫 `<task>/` 子目录） |
+| GET | `/plans/history` | 历史报告列表（只读 `meta.json`），`?operation=task1&limit=200` |
 
 任务：`task1` 最少星达覆盖率（面积口径）、`task2` 最少星达重访、`task3` 给定星数最大化覆盖面积（面积口径）、
 `task4` 给定星数最小化面积分位 MRT、`task5` 给定星数最小化 ART。
@@ -60,7 +61,11 @@ curl -s http://127.0.0.1:8766/api/v1/satellites/40118
 - `auto_expand` 只允许 `task1`：先按请求窗口算，不达标再按 72h → 168h 阶梯扩窗（最多 3 次求解，最大 7 天；超过 7 天的 TLE 按口径拒绝过境）。请求 72h 时也会继续扩到 168h。结果 `window` 返回请求/实际窗口和 `expanded`，报告按实际窗口展示。
 - TLE 年龄按 `tle_record.epoch_utc` 实时计算：>72h 标 degraded，全部候选 >168h 时返回 `tle_stale`；`plan-options.tle` 暴露 `max_age_hours` / `degraded` / `stale`。
 - `rs-service-sync.timer` 每天 03:00 同步；TLE 过期时先跑一次 `rs-service sync`。
-- 任务状态在进程内；重启丢任务，`reports/imaging-plan/<job_id>/` 下的报告文件保留，`latest` 指向最近一次。
+- 任务状态在进程内；重启丢任务，报告文件保留。
+- 报告落盘：`reports/imaging-plan/<task>/<run_id>/{plan.json,report.html,meta.json}`，`<task>` 是 `task1`..`task5`（旧 slug 自动归一）；根上 `latest` 软链指向最近一份（`<task>/<run_id>`）。`meta.json` 是历史列表要用的精简元数据（任务、区域、窗口、星数、KPI、生成时间），避免为了列表去读几百 KB 的 `plan.json`。
+- `GET /plans/history` 返回 `{ok, root, runs[], total, by_task}`；`runs` 按 `created_at` 倒序，每项含 `run_id / task / task_label / aoi_kind(city|custom) / area_name / window_start / window_end / sat_count / kpi{key,label,value,unit} / feasible / created_at / relative_report / relative_plan / has_report`。`by_task` 统计全部任务（不受 `operation` 过滤影响），方便前端渲染组头；`limit` 上限 500。
+- KPI 口径随任务：`task1` 达标面积（`qualified_area_pct`）、`task2` P95 重访（回退面积加权 MRT）、`task3` 覆盖面积、`task4` N% 面积分位 MRT（小时）、`task5` 面积加权 ART。
+- 报告「覆盖与回放」只显示回放时间（不再显示累计覆盖百分比）；购买按钮在报告加载时问一次 SIRIAgent 的 `/api/purchases`，已买过就显示「已购买」并链到对应购买单。
 
 ## 遥感解译 `/api/v1/interpret`
 

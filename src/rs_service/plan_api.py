@@ -28,7 +28,7 @@ from .coverage_engine.adapter import (
 )
 from .db.models import Aoi, TleCurrent, TleRecord
 from .db.session import session_scope
-from .report import report_root, write_report
+from .report import find_run_dir, list_reports, report_root, write_report
 
 router = APIRouter(prefix="/api/v1", tags=["plans"])
 
@@ -312,6 +312,20 @@ def create_plan(payload: PlanCreate) -> dict[str, Any]:
     }
 
 
+@router.get("/plans/history")
+def plan_history(operation: str | None = None, limit: int = 200) -> dict[str, Any]:
+    """历史报告列表。只读 ``meta.json``，按生成时间倒序。
+
+    路径要在 ``/plans/{job_id}`` 之前声明，否则 ``history`` 会被当成 job_id。
+    """
+
+    return {
+        "ok": True,
+        "root": str(report_root()),
+        **list_reports(report_root(), operation=operation, limit=limit),
+    }
+
+
 @router.get("/plans/{job_id}")
 def get_plan(job_id: str) -> dict[str, Any]:
     job = JOBS.get(job_id)
@@ -342,8 +356,9 @@ def create_report(job_id: str) -> dict[str, Any]:
 
 @router.get("/plans/{job_id}/report")
 def get_report(job_id: str) -> FileResponse:
-    path = report_root() / job_id / "report.html"
-    if not path.is_file():
+    run_dir = find_run_dir(report_root(), job_id)
+    path = run_dir / "report.html" if run_dir else None
+    if path is None or not path.is_file():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"code": "report_not_found", "job_id": job_id},

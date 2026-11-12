@@ -1,8 +1,15 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
-from rs_service.report import render_report, write_report
+from rs_service.report import (
+    build_meta,
+    list_reports,
+    render_report,
+    task_key,
+    write_report,
+)
 
 
 def fake_result() -> dict:
@@ -115,6 +122,9 @@ def test_report_carries_purchase_link_when_run_id_given() -> None:
     html = render_report(fake_result(), "run-abc")
     assert "购买本方案" in html
     assert 'href="/purchase/run-abc"' in html
+    # 报告靠这段 JS 问一次购买记录，已买过就把按钮换成「已购买」。
+    assert 'data-run-id="run-abc"' in html
+    assert "/api/purchases" in html
     # 没传 run_id 时不渲染按钮（单测与旧调用兼容）。
     assert "购买本方案" not in render_report(fake_result())
 
@@ -155,6 +165,102 @@ def test_write_report_writes_files_and_latest(tmp_path: Path) -> None:
     assert (tmp_path / "latest").is_symlink()
     assert (tmp_path / "latest" / "plan.json").is_file()
     assert "卫星构成" in (tmp_path / "latest" / "report.html").read_text(encoding="utf-8")
+
+
+def test_write_report_groups_runs_under_task_dir(tmp_path: Path) -> None:
+    info = write_report(fake_result(), "run1", root=tmp_path)
+    assert info["task"] == "task1"
+    run_dir = tmp_path / "task1" / "run1"
+    assert Path(info["report_path"]) == run_dir / "report.html"
+    assert Path(info["meta_path"]) == run_dir / "meta.json"
+    assert info["relative_report"].endswith("task1/run1/report.html")
+    # latest 指向任务子目录，而不是根上的 run_id
+    assert (tmp_path / "latest" / "report.html").is_file()
+    meta = json.loads((run_dir / "meta.json").read_text(encoding="utf-8"))
+    assert meta["task"] == "task1"
+    assert meta["task_label"] == "最少星达到覆盖率"
+    assert meta["area_name"] == "杭州市"
+    assert meta["aoi_kind"] == "city"
+    assert meta["sat_count"] == 1
+    assert meta["kpi"] == {
+        "key": "qualified_area_pct",
+        "label": "达标面积",
+        "value": 90.0,
+        "unit": "%",
+    }
+    assert meta["created_at"].endswith("+00:00")
+
+
+def test_task_key_normalizes_legacy_slugs() -> None:
+    assert task_key("task3") == "task3"
+    assert task_key("task_1_min_satellites_temporal") == "task1"
+    assert task_key("task_4_min_area_quantile_mrt") == "task4"
+    assert task_key("something_else") == "other"
+
+
+def test_meta_flags_custom_aoi() -> None:
+    result = fake_result()
+    result["city"] = {"name": "自定义范围", "adcode": "custom_abc123"}
+    meta = build_meta(result, "run-custom")
+    assert meta["aoi_kind"] == "custom"
+    assert meta["area_name"] == "自定义范围"
+
+
+def test_task4_meta_kpi_is_area_quantile_mrt() -> None:
+    result = fake_result()
+    result["operation"] = "task_4_min_area_quantile_mrt"
+    result["selection"] = {"result": {"area_target_pct": 90.0, "area_quantile_mrt_s": 255520.0}}
+    meta = build_meta(result, "run-task4")
+    assert meta["task"] == "task4"
+    assert meta["kpi"]["label"] == "90% 面积分位 MRT"
+    assert meta["kpi"]["value"] == 71.0
+    assert meta["kpi"]["unit"] == "h"
+
+
+def test_report_history_lists_runs_by_task(tmp_path: Path) -> None:
+    write_report(fake_result(), "a1", root=tmp_path)
+    task3 = fake_result()
+    task3["operation"] = "task_3_max_qualified_area"
+    write_report(task3, "b1", root=tmp_path)
+    payload = list_reports(tmp_path)
+    assert payload["total"] == 2
+    assert payload["by_task"] == {"task1": 1, "task3": 1}
+    assert {run["run_id"] for run in payload["runs"]} == {"a1", "b1"}
+    assert payload["runs"][0]["relative_report"].endswith("report.html")
+    assert all(run["has_report"] for run in payload["runs"])
+    only = list_reports(tmp_path, operation="task3")
+    assert [run["run_id"] for run in only["runs"]] == ["b1"]
+    assert only["total"] == 1
+    # by_task 统计的是全部任务，方便前端渲染组头
+    assert only["by_task"] == {"task1": 1, "task3": 1}
+
+
+def test_report_history_sorts_newest_first(tmp_path: Path) -> None:
+    for run_id, created in (("old", "2026-11-01T10:00:00+00:00"), ("new", "2026-11-09T10:00:00+00:00")):
+        write_report(fake_result(), run_id, root=tmp_path)
+        meta_path = tmp_path / "task1" / run_id / "meta.json"
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        meta["created_at"] = created
+        meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    payload = list_reports(tmp_path)
+    assert [run["run_id"] for run in payload["runs"]] == ["new", "old"]
+
+
+def test_report_history_respects_limit(tmp_path: Path) -> None:
+    for index in range(3):
+        write_report(fake_result(), f"run{index}", root=tmp_path)
+    payload = list_reports(tmp_path, limit=2)
+    assert payload["total"] == 3
+    assert len(payload["runs"]) == 2
+
+
+def test_report_playback_clock_shows_time_only() -> None:
+    html = render_report(fake_result(), "run1")
+    assert 'id="now"' in html
+    assert 'id="pct"' not in html
+    assert "pctEl" not in html
+    assert "cum[" not in html
+    assert "TOTAL" not in html
 
 
 def test_task1_report_uses_area_target_and_hides_temporal_strip() -> None:
