@@ -52,6 +52,16 @@ def change_detection(body: ChangeDetectionRequest) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+@router.post("/process-image")
+def process_image(body: ImageProcessRequest) -> dict[str, Any]:
+    try:
+        return service.run_image_process(body.image_path, body.operator, body.level)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @router.post("/semantic-segmentation")
 def semantic_segmentation(body: SemanticSegmentationRequest) -> dict[str, Any]:
     try:

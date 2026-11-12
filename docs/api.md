@@ -70,12 +70,14 @@ curl -s http://127.0.0.1:8766/api/v1/satellites/40118
 | POST | `/interpret/change-detection` | 变化检测（FlickCD，双图）；`{before_path, after_path}` |
 | POST | `/interpret/object-detection` | 目标检测（YOLOX-S COCO 80 类，单图）；`{image_path}` |
 | POST | `/interpret/semantic-segmentation` | 语义分割（SparseMask OpenEarthMap 8 类，单图）；`{image_path}` |
+| POST | `/interpret/process-image` | 图像处理（灰度 / Canny / 降噪）；`{image_path, operator, level?}` |
 
 - 路径只允许 `workspace/` 或 `demo/` 下；越界 403、文件不存在 422、变化检测超时 504。
 - 结果写 `SIRIAgent/reports/interpret/<run_id>/`（`mask.png` / `object_annotated.png` / `semantic_seg_map.png` + `semantic_seg_overlay.png` / `result.json`）。
 - 每个响应带 `accuracy_note`；目标检测 `accuracy_note` 为「YOLOX-S 估计（阈值 0.25 / NMS 0.45），结果需人工复核；输入限制最大边 2048」。
 - 目标检测权重 `data/models/object_detection/yolox_s.pth`（Megvii 官方 COCO 预训练，Apache-2.0，约 68.7MB）不入库，用 `.venv/bin/python scripts/fetch_models.py yolox` 拉取（ghproxy 镜像 + SHA256 校验）。
 - 语义分割权重 `data/models/semantic_segmentation/sparsemask_openearthmap.onnx`（MIT 代码 / OpenEarthMap 权重 CC BY-NC-SA，限所内非商用，11.9MB）不入库，用 `scripts/fetch_models.py sparsemask` 拉取；类别表随权重目录 `sparsemask_config.json`（8 类 + 调色板，入库）。
+- 图像处理档位：`canny` ∈ soft/normal/sharp（默认 normal）、`denoise` ∈ light/medium/strong（默认 light）；灰度忽略档位。
 - 语义分割 `accuracy_note`：「SparseMask（OpenEarthMap 8 类预训练）估计，逐像素类别需人工复核；输入等比缩到长边 1024 后推理，再最近邻上采样回原尺寸」。
 
 ## MCP（Streamable HTTP）
@@ -97,6 +99,7 @@ DSH 侧工具名带前缀：`mcp__rs-service__<tool>`。
 | `detect_change` | `before_path`, `after_path` | 掩膜路径、变化像素/占比、连通域、耗时、`accuracy_note` |
 | `detect_objects` | `image_path` | 标注图路径、目标数/类别数、检测框列表、耗时、`accuracy_note` |
 | `segment_semantics` | `image_path` | 分类专题图/叠加图路径、各类面积占比、类别数、耗时、`accuracy_note` |
+| `process_image` | `image_path`, `operator`(`grayscale`\|`canny`\|`denoise`), `level?` | 结果图路径、算子/档位、尺寸、耗时、`accuracy_note` |
 
 后续工具（`get_tle`、`propagate`、`run_command`）按需求文档 §5.2 逐步补齐；每个工具同时更新本文件与 `COMMANDS.md`。
 

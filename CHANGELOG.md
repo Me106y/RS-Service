@@ -2,6 +2,13 @@
 
 RS-Service 的用户可见变化。版本规则见 [VERSIONING.md](https://github.com/Me106y/SIRIAgent/blob/main/docs/VERSIONING.md)。
 
+## [1.7.0] - 2026-11-12
+
+### Added
+
+- 遥感解译新增**图像处理**三算子：灰度图 / Canny 边缘（soft 30/90、normal 50/150、sharp 80/200）/ 降噪（light 高斯 3×3、medium 中值 5×5、strong NL-Means），REST `POST /api/v1/interpret/process-image` 与 MCP 工具 `process_image`；返回结果图路径、算子/档位、尺寸、耗时与 `accuracy_note`。
+- 结果落 `reports/interpret/<run_id>/`，文件名 `<原文件名>_<算子>[_<档位>].png`（对齐 SIRIGeo）。
+
 ## [1.6.0] - 2026-11-12
 
 ### Added

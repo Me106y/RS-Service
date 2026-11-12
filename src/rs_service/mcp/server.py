@@ -269,6 +269,25 @@ def segment_semantics(image_path: str) -> dict[str, Any]:
         return {"ok": False, "error": type(exc).__name__, "message": str(exc)}
 
 
+@mcp.tool()
+def process_image(
+    image_path: str, operator: str, level: str | None = None
+) -> dict[str, Any]:
+    """Run one deterministic OpenCV operator on a workspace/demo image.
+
+    operator: grayscale | canny | denoise.
+    level: canny soft|normal|sharp, denoise light|medium|strong (ignored for grayscale).
+    Returns the output image path, operator/level, size, elapsed time and an
+    accuracy note.
+    """
+    try:
+        return interpret_service.run_image_process(image_path, operator, level)
+    except PermissionError as exc:
+        return {"ok": False, "error": "forbidden", "message": str(exc)}
+    except (ValueError, FileNotFoundError) as exc:
+        return {"ok": False, "error": type(exc).__name__, "message": str(exc)}
+
+
 def run_server(host: str | None = None, port: int | None = None) -> None:
     interpret_service.warmup_safe()
     mcp.run(
