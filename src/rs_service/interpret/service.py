@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from . import infer, object_detect, semantic_seg
+from . import image_process, infer, object_detect, semantic_seg
 
 log = logging.getLogger("rs_service.interpret")
 
@@ -209,6 +209,48 @@ def run_semantic_segmentation(image_path: str) -> dict[str, Any]:
         "class_count": result["class_count"],
         "elapsed_ms": result["elapsed_ms"],
         "accuracy_note": SEMANTIC_ACCURACY_NOTE,
+    }
+    (output_dir / "result.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    return payload
+
+
+PROCESS_ACCURACY_NOTE = (
+    "图像处理为确定性 OpenCV 算子（灰度 / Canny / 降噪），不是模型估计；"
+    "结果保留原图像素尺寸。"
+)
+
+
+def run_image_process(
+    image_path: str, operator: str, level: str | None = None
+) -> dict[str, Any]:
+    """同步执行一个图像处理算子，结果写到 SIRIAgent 的 reports/interpret/。"""
+    image = _resolve_image(image_path)
+    if operator not in image_process.OPERATOR_NAMES:
+        raise ValueError(
+            f"未知处理算子：{operator}（在册：{'、'.join(image_process.OPERATOR_NAMES)}）"
+        )
+    run_id, output_dir = _new_run_id()
+    result = image_process.process(image, operator, level)
+    suffix = image_process.DISPLAY_NAMES[operator]
+    if result["level"]:
+        suffix = f"{suffix}_{result['level']}"
+    output_path = output_dir / f"{Path(image).stem}_{suffix}.png"
+    image_process.write_png(output_path, result.pop("output"))
+    payload: dict[str, Any] = {
+        "ok": True,
+        "run_id": run_id,
+        "image_path": _relative(image),
+        "output_path": _relative(output_path),
+        "operator": result["operator"],
+        "operator_name": result["operator_name"],
+        "level": result["level"],
+        "level_name": result["level_name"],
+        "width": result["width"],
+        "height": result["height"],
+        "elapsed_ms": result["elapsed_ms"],
+        "accuracy_note": PROCESS_ACCURACY_NOTE,
     }
     (output_dir / "result.json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"

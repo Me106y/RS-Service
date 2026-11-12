@@ -93,3 +93,28 @@ def test_run_semantic_segmentation_writes_result(isolate: Path) -> None:
     color_map = service.SIRIAGENT_ROOT / payload["color_map_path"]
     overlay = service.SIRIAGENT_ROOT / payload["overlay_path"]
     assert color_map.is_file() and overlay.is_file()
+
+
+def test_run_image_process_operators(isolate: Path, tmp_path: Path) -> None:
+    image = isolate / "demo" / "images" / "object_detection" / "sample.png"
+    _write_image(image)
+
+    cases = [
+        ("grayscale", None),
+        ("canny", "soft"),
+        ("canny", "sharp"),
+        ("denoise", "medium"),
+    ]
+    for operator, level in cases:
+        payload = service.run_image_process(
+            "demo/images/object_detection/sample.png", operator, level
+        )
+        assert payload["ok"] is True
+        assert payload["operator"] == operator
+        assert payload["accuracy_note"]
+        assert (service.SIRIAGENT_ROOT / payload["output_path"]).is_file()
+        if level:
+            assert payload["level"] == level
+
+    with pytest.raises(ValueError):
+        service.run_image_process("demo/images/object_detection/sample.png", "blur")
