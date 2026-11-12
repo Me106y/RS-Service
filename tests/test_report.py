@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from rs_service.report import (
@@ -333,3 +334,20 @@ def test_task2_report_uses_hours_for_long_targets() -> None:
     html = render_report(result, "run-task2-ok")
     assert "达标面积（最长重访 ≤ 48 h · 面积 90%）" in html
     assert "必然为 0.0%" not in html
+
+
+def test_task5_report_uses_area_weighted_art() -> None:
+    result = fake_result()
+    result["operation"] = "task_5_min_area_weighted_art"
+    result["targets"] = {"temporal_coverage_pct": None, "area_pct": None, "mrt_minutes": None}
+    result["summary_cards"]["qualified_area_pct"] = None
+    result["summary_cards"]["area_weighted_art_minutes"] = 1234.782
+    result["weak_areas"][0]["art_minutes"] = 1234.0
+    html = render_report(result, "run-task5")
+    # 首屏只保留「选中卫星 + 面积加权 ART」，不再出现达标面积与时间覆盖率
+    labels = re.findall(r'<div class="lab">([^<]*)</div>', html)
+    assert labels == ["选中卫星", "面积加权 ART"]
+    assert "面积加权 ART 20.6 h" in re.sub(r"<[^>]+>", "", html)
+    assert "达标面积" not in html
+    # 薄弱区保留 时间覆盖率 + ART 两列
+    assert '<th class="num">ART</th>' in html
