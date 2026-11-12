@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from . import infer, object_detect
+from . import infer, object_detect, semantic_seg
 
 log = logging.getLogger("rs_service.interpret")
 
@@ -27,6 +27,9 @@ DEMO = SIRIAGENT_ROOT / "demo" / "images"
 REPORT_ROOT = SIRIAGENT_ROOT / "reports" / "interpret"
 MODEL_PATH = PROJECT_ROOT / "data" / "models" / "change_detection" / "best_model.pth"
 OBJECT_MODEL_PATH = PROJECT_ROOT / "data" / "models" / "object_detection" / "yolox_s.pth"
+SEMANTIC_MODEL_PATH = (
+    PROJECT_ROOT / "data" / "models" / "semantic_segmentation" / "sparsemask_openearthmap.onnx"
+)
 ALLOWED_ROOTS = (WORKSPACE, DEMO)
 ALLOWED_SUFFIXES = {".png", ".jpg", ".jpeg"}
 ACCURACY_NOTE = (
@@ -36,6 +39,10 @@ ACCURACY_NOTE = (
 OBJECT_ACCURACY_NOTE = (
     "目标检测为 YOLOX-S（COCO 80 类预训练）估计，置信度阈值 0.25 / NMS 0.45，"
     "结果需人工复核；输入限制最大边 2048。"
+)
+SEMANTIC_ACCURACY_NOTE = (
+    "语义分割为 SparseMask（OpenEarthMap 8 类预训练）估计，逐像素类别需人工复核；"
+    "输入等比缩到长边 1024 后推理，再最近邻上采样回原尺寸。"
 )
 BJ = timezone(timedelta(hours=8))
 
@@ -67,6 +74,12 @@ def warmup_safe() -> None:
             log.info("object detection model warmup ok")
     except Exception as exc:  # noqa: BLE001
         log.warning("object detection warmup failed: %s", exc)
+    try:
+        if SEMANTIC_MODEL_PATH.is_file():
+            semantic_seg.warmup(str(SEMANTIC_MODEL_PATH))
+            log.info("semantic segmentation model warmup ok")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("semantic segmentation warmup failed: %s", exc)
 
 
 def _png_size(path: Path) -> tuple[int, int] | None:
@@ -166,6 +179,36 @@ def run_object_detection(image_path: str) -> dict[str, Any]:
         "elapsed_ms": result["elapsed_ms"],
         "device": result["device"],
         "accuracy_note": OBJECT_ACCURACY_NOTE,
+    }
+    (output_dir / "result.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    return payload
+
+
+def run_semantic_segmentation(image_path: str) -> dict[str, Any]:
+    """同步执行一次语义分割，结果写到 SIRIAgent 的 reports/interpret/。"""
+    image = _resolve_image(image_path)
+    if not SEMANTIC_MODEL_PATH.is_file():
+        raise FileNotFoundError(f"语义分割权重不存在：{SEMANTIC_MODEL_PATH}")
+    run_id, output_dir = _new_run_id()
+    result = semantic_seg.segment(image, SEMANTIC_MODEL_PATH)
+    color_path = output_dir / "semantic_seg_map.png"
+    overlay_path = output_dir / "semantic_seg_overlay.png"
+    semantic_seg.write_png(color_path, result.pop("color_map"))
+    semantic_seg.write_png(overlay_path, result.pop("overlay"))
+    payload: dict[str, Any] = {
+        "ok": True,
+        "run_id": run_id,
+        "image_path": _relative(image),
+        "color_map_path": _relative(color_path),
+        "overlay_path": _relative(overlay_path),
+        "width": result["width"],
+        "height": result["height"],
+        "classes": result["classes"],
+        "class_count": result["class_count"],
+        "elapsed_ms": result["elapsed_ms"],
+        "accuracy_note": SEMANTIC_ACCURACY_NOTE,
     }
     (output_dir / "result.json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"

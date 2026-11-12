@@ -1,0 +1,22 @@
+{
+    "classes": [
+        "bareland",
+        "rangeland",
+        "developed space",
+        "road",
+        "tree",
+        "water",
+        "agriculture land",
+        "buildings"
+    ],
+    "colors": [
+        [128, 0, 0],
+        [0, 255, 0],
+        [192, 192, 192],
+        [255, 255, 255],
+        [49, 139, 87],
+        [0, 0, 255],
+        [127, 255, 0],
+        [255, 0, 0]
+    ]
+}

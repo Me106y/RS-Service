@@ -32,6 +32,15 @@ CATALOG = {
         "f55ded7181e1b0c13285c56e7790b8f0e8f8db590fe4edb37f0b7f345c913a30",
         "Apache-2.0",
     ),
+    "sparsemask": (
+        "semantic_segmentation/sparsemask_openearthmap.onnx",
+        [
+            "https://hf-mirror.com/geobase/sparsemask/resolve/main/onnx/model.onnx",
+            "https://huggingface.co/geobase/sparsemask/resolve/main/onnx/model.onnx",
+        ],
+        "83c6ff78ff65818a38ed20ab562ccb9b20927bac6ef93021b3066a712678193d",
+        "MIT code / OpenEarthMap weights (CC BY-NC-SA, 限所内)",
+    ),
 }
 
 
