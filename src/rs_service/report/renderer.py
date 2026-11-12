@@ -164,6 +164,20 @@ def _notes(result: dict[str, Any]) -> list[str]:
             "覆盖面积：时间窗内至少被选中卫星覆盖一次的网格面积占比；"
             "面积按覆盖网格累加，不设额外时间门槛。"
         )
+    elif operation in {"task2", "task_2_min_satellites_mrt"}:
+        minutes = _task2_mrt_target_min(result)
+        cards = result.get("summary_cards") or {}
+        achieved = float(cards.get("qualified_area_pct") or 0.0)
+        notes.append(
+            "达标面积：单格最长重访间隔（含夜间与窗口首尾空档）≤ "
+            f"{_duration_label(minutes)} 的面积占比；覆盖率按全天统计，不只算过境时刻。"
+        )
+        if achieved == 0.0:
+            notes.append(
+                "达标面积 0.0% 先看目标是不是低于物理下限：光学只覆盖白天，单格最长间隔至少是"
+                "夜间空档（约 12–19 h），分钟级目标（如 24 分）必然为 0.0%。把「最长重访上限」"
+                "改到小时级再求解，或改用全天候载荷；不要为此调低面积目标。"
+            )
     elif operation in {"task4", "task_4_min_area_quantile_mrt"}:
         task4 = (result.get("selection") or {}).get("result") or {}
         mrt_s = float(task4.get("area_quantile_mrt_s") or 0.0)
@@ -273,6 +287,7 @@ def render_report(result: dict[str, Any], run_id: str | None = None) -> str:
     is_task1 = operation in {"task1", "task_1_min_satellites_temporal"}
     is_task3 = operation in {"task3", "task_3_max_qualified_area"}
     is_task4 = operation in {"task4", "task_4_min_area_quantile_mrt"}
+    is_task2 = operation in {"task2", "task_2_min_satellites_mrt"}
     # task3/task4 是各自口径，不再展示通用“时间覆盖率”。
     show_temporal = not is_task1 and not is_task3 and not is_task4
     area_target = targets.get("area_pct")
@@ -285,6 +300,7 @@ def render_report(result: dict[str, Any], run_id: str | None = None) -> str:
     mrt_s = float(task4.get("area_quantile_mrt_s") or 0.0)
     mrt_h = mrt_s / 3600.0
     n_budget = task4.get("n_budget")
+    task2_target_min = _task2_mrt_target_min(result) if is_task2 else None
     if is_task4:
         mrt_target = float(task4.get("area_target_pct") or area_target or 90.0)
         target_label = f"{mrt_target:g}% 面积分位 MRT"
@@ -294,6 +310,20 @@ def render_report(result: dict[str, Any], run_id: str | None = None) -> str:
         budget_value = f"{n_budget or '—'} / {count} 颗"
     elif is_task3:
         target_label = "覆盖面积"
+        target_value = f"{area_pct:.1f}"
+        target_unit = "%"
+        budget_label = ""
+        budget_value = ""
+    elif is_task2:
+        # task2 的“达标”同时受面积目标与最长重访目标约束：只写目标面积会让人以为
+        # 0.0% 是算法坏了，其实多半是重访目标低于物理下限（光学夜间无过境）。
+        target_label = (
+            f"达标面积（最长重访 ≤ {_duration_label(task2_target_min)} · 面积 {area_target:g}%）"
+            if task2_target_min is not None and area_target is not None
+            else f"达标面积（最长重访 ≤ {_duration_label(task2_target_min)}）"
+            if task2_target_min is not None
+            else f"达标面积（目标 {area_target:g}%）"
+        )
         target_value = f"{area_pct:.1f}"
         target_unit = "%"
         budget_label = ""
@@ -367,6 +397,29 @@ def render_report(result: dict[str, Any], run_id: str | None = None) -> str:
         algo_label="coverage-engine 0.1.0-rc.1 · RS-Service",
         purchase_run_id=run_id,
     )
+
+
+def _duration_label(minutes: float | None) -> str:
+    """目标时长用小时/分钟里更顺口的那个；task2 的目标常常是小时级。"""
+
+    if minutes is None:
+        return "—"
+    if minutes >= 120:
+        return f"{minutes / 60.0:g} h"
+    return f"{minutes:g} 分"
+
+
+def _task2_mrt_target_min(result: dict[str, Any]) -> float | None:
+    """task2 的目标是「单格最长重访间隔上限」，单位分钟。"""
+
+    selection = result.get("selection") or {}
+    for key in ("recommended_result", "strict_result"):
+        node = selection.get(key) or {}
+        seconds = node.get("mrt_target_s")
+        if seconds is not None:
+            return float(seconds) / 60.0
+    mrt_minutes = (result.get("targets") or {}).get("mrt_minutes")
+    return float(mrt_minutes) if mrt_minutes is not None else None
 
 
 def _round(value: Any, digits: int = 1) -> float | None:

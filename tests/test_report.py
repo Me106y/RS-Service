@@ -309,3 +309,27 @@ def test_task4_report_uses_mrt_kpi_and_no_time_coverage() -> None:
     assert "时间覆盖率" not in html
     assert "达标面积" not in html
     assert "两者不是同一个指标" in html
+
+
+def test_task2_report_labels_mrt_target_and_explains_zero_area() -> None:
+    result = fake_result()
+    result["operation"] = "task_2_min_satellites_mrt"
+    result["targets"] = {"temporal_coverage_pct": None, "area_pct": 90.0, "mrt_minutes": None}
+    result["summary_cards"]["qualified_area_pct"] = 0.0
+    result["selection"] = {"recommended_result": {"mrt_target_s": 1440.0, "achieved_area_pct": 0.0}}
+    html = render_report(result, "run-task2")
+    # 目标写在达标面积旁边，0.0% 时才不会被当成算法坏了
+    assert "达标面积（最长重访 ≤ 24 分 · 面积 90%）" in html
+    assert "光学只覆盖白天" in html
+    assert "必然为 0.0%" in html
+
+
+def test_task2_report_uses_hours_for_long_targets() -> None:
+    result = fake_result()
+    result["operation"] = "task_2_min_satellites_mrt"
+    result["targets"] = {"temporal_coverage_pct": None, "area_pct": 90.0, "mrt_minutes": None}
+    result["summary_cards"]["qualified_area_pct"] = 66.1
+    result["selection"] = {"strict_result": {"mrt_target_s": 2880 * 60.0}}
+    html = render_report(result, "run-task2-ok")
+    assert "达标面积（最长重访 ≤ 48 h · 面积 90%）" in html
+    assert "必然为 0.0%" not in html

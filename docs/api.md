@@ -64,7 +64,7 @@ curl -s http://127.0.0.1:8766/api/v1/satellites/40118
 - 任务状态在进程内；重启丢任务，报告文件保留。
 - 报告落盘：`reports/imaging-plan/<task>/<run_id>/{plan.json,report.html,meta.json}`，`<task>` 是 `task1`..`task5`（旧 slug 自动归一）；根上 `latest` 软链指向最近一份（`<task>/<run_id>`）。`meta.json` 是历史列表要用的精简元数据（任务、区域、窗口、星数、KPI、生成时间），避免为了列表去读几百 KB 的 `plan.json`。
 - `GET /plans/history` 返回 `{ok, root, runs[], total, by_task}`；`runs` 按 `created_at` 倒序，每项含 `run_id / task / task_label / aoi_kind(city|custom) / area_name / window_start / window_end / sat_count / kpi{key,label,value,unit} / feasible / created_at / relative_report / relative_plan / has_report`。`by_task` 统计全部任务（不受 `operation` 过滤影响），方便前端渲染组头；`limit` 上限 500。
-- KPI 口径随任务：`task1` 达标面积（`qualified_area_pct`）、`task2` P95 重访（回退面积加权 MRT）、`task3` 覆盖面积、`task4` N% 面积分位 MRT（小时）、`task5` 面积加权 ART。
+- KPI 口径随任务：`task1` 达标面积（`qualified_area_pct`）、`task2` 达标面积 = 面积中「单格最长重访间隔 ≤ 目标」的占比（报告标签带重访目标，MRT 含夜间与窗口首尾空档）、`task3` 覆盖面积、`task4` N% 面积分位 MRT（小时）、`task5` 面积加权 ART。
 - 报告「覆盖与回放」只显示回放时间（不再显示累计覆盖百分比）；购买按钮在报告加载时问一次 SIRIAgent 的 `/api/purchases`，已买过就显示「已购买」并链到对应购买单。
 
 ## 遥感解译 `/api/v1/interpret`
