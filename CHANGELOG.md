@@ -2,6 +2,18 @@
 
 RS-Service 的用户可见变化。版本规则见 [VERSIONING.md](https://github.com/Me106y/SIRIAgent/blob/main/docs/VERSIONING.md)。
 
+## [1.6.0] - 2026-11-12
+
+### Added
+
+- 遥感解译新增**语义分割**：SparseMask + OpenEarthMap 8 类 ONNX（MIT 代码 / CC BY-NC-SA 权重，限所内），REST `POST /api/v1/interpret/semantic-segmentation` 与 MCP 工具 `segment_semantics`；返回 8 类专题图、半透明叠加图、各类像素与占比、`accuracy_note`。
+- 新增依赖 `onnxruntime>=1.18`（CPU）。
+- 权重按需拉取：`scripts/fetch_models.py sparsemask`（hf-mirror + SHA256 校验），类别表 `sparsemask_config.json` 入库。
+
+### Changed
+
+- `warmup_safe` 在权重存在时预热语义分割会话。
+
 ## [1.5.0] - 2026-11-12
 
 ### Added

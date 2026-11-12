@@ -73,3 +73,23 @@ def test_run_object_detection_writes_result(isolate: Path) -> None:
     assert payload["accuracy_note"]
     annotated = service.SIRIAGENT_ROOT / payload["annotated_path"]
     assert annotated.is_file()
+
+
+@pytest.mark.skipif(
+    not service.SEMANTIC_MODEL_PATH.is_file(),
+    reason="SparseMask 权重未就绪（scripts/fetch_models.py sparsemask）",
+)
+def test_run_semantic_segmentation_writes_result(isolate: Path) -> None:
+    image = isolate / "demo" / "images" / "semantic_segmentation" / "sample.png"
+    _write_image(image)
+    payload = service.run_semantic_segmentation(
+        "demo/images/semantic_segmentation/sample.png"
+    )
+    assert payload["ok"] is True
+    assert payload["class_count"] >= 1
+    assert len(payload["classes"]) == 8
+    assert abs(sum(item["ratio"] for item in payload["classes"]) - 1.0) < 1e-3
+    assert payload["accuracy_note"]
+    color_map = service.SIRIAGENT_ROOT / payload["color_map_path"]
+    overlay = service.SIRIAGENT_ROOT / payload["overlay_path"]
+    assert color_map.is_file() and overlay.is_file()

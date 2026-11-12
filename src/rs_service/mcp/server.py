@@ -253,6 +253,22 @@ def detect_objects(image_path: str) -> dict[str, Any]:
         return {"ok": False, "error": type(exc).__name__, "message": str(exc)}
 
 
+@mcp.tool()
+def segment_semantics(image_path: str) -> dict[str, Any]:
+    """Run SparseMask (OpenEarthMap 8 classes) semantic segmentation on one image.
+
+    Paths are relative to the SIRIAgent root and must stay under workspace/ or demo/.
+    Returns the color map / overlay paths, per-class pixel counts and ratios,
+    elapsed time and an accuracy note.
+    """
+    try:
+        return interpret_service.run_semantic_segmentation(image_path)
+    except PermissionError as exc:
+        return {"ok": False, "error": "forbidden", "message": str(exc)}
+    except (ValueError, FileNotFoundError) as exc:
+        return {"ok": False, "error": type(exc).__name__, "message": str(exc)}
+
+
 def run_server(host: str | None = None, port: int | None = None) -> None:
     interpret_service.warmup_safe()
     mcp.run(
