@@ -2,6 +2,12 @@
 
 RS-Service 的用户可见变化。版本规则见 [VERSIONING.md](https://github.com/Me106y/SIRIAgent/blob/main/docs/VERSIONING.md)。
 
+## [1.7.1] - 2026-11-12
+
+### Fixed
+
+- 单颗卫星 SGP4 传播失败（错误码 6 = 轨道已衰减，如 NORAD 53445 Jilin-1 GF-03D09）不再让整份 imaging-plan 以 `execution_error` 失败：复杂传感器路径按时刻 `valid` 掩码把传播失败时段判为不可覆盖；整颗星全部时刻失败时跳过该星并在 `assumptions` 写明「已从机会计算中跳过」。长窗口（7 天）规划不再被一颗衰减星拖垮。
+
 ## [1.7.0] - 2026-11-12
 
 ### Added
