@@ -7,7 +7,8 @@ import pytest
 from pydantic import ValidationError
 
 from rs_service.coverage_engine.adapter import (
-    ALONG_TRACK_HALF_ANGLE_DEG,
+    ALONG_TRACK_GROUND_SPEED_KMS,
+    ALONG_TRACK_SMEAR_FACTOR,
     Candidate,
     PlanSpec,
     _horizons,
@@ -56,7 +57,10 @@ def test_payload_uses_db_profile_and_nadir_by_default() -> None:
     assert payload["satellite_ids"] == [39150]
     override = payload["satellite_profile_overrides"][0]
     assert override["swath_km"] == 800.0
-    assert override["along_track_half_angle_deg"] == ALONG_TRACK_HALF_ANGLE_DEG
+    # 推扫靠运动累积：沿轨半长 = 0.55·v·dt，10 s 对应 41.25 km
+    assert override["along_track_km"] == pytest.approx(
+        ALONG_TRACK_SMEAR_FACTOR * ALONG_TRACK_GROUND_SPEED_KMS * 10
+    )
     assert override["min_elevation_deg"] == 10.0
     assert override["constraints"] == [
         {"name": "SunGroundElevAngle", "params": "Min 10"}
@@ -67,13 +71,24 @@ def test_payload_uses_db_profile_and_nadir_by_default() -> None:
     assert "method" not in payload
 
 
-def test_payload_targeted_adds_pointing() -> None:
+def test_payload_never_adds_pointing_override() -> None:
+    # 目标指向已取消：不管 spec 里写什么，都不再生成 Targeted 覆盖配置。
     spec = replace(
         PlanSpec(operation="task2", aoi_code="330100", mrt_target_minutes=24),
         pointing="targeted",
     )
     payload = _payload(spec, [_candidate()], "330100")
-    assert payload["satellite_profile_overrides"][0]["pointing"] == {"type": "Targeted"}
+    assert "pointing" not in payload["satellite_profile_overrides"][0]
+
+
+def test_plan_create_rejects_targeted_pointing() -> None:
+    with pytest.raises(ValidationError):
+        PlanCreate(
+            operation="task1",
+            aoi_code="330100",
+            temporal_coverage_target_pct=0.3,
+            pointing="targeted",
+        )
 
 
 def test_workspace_writes_omm_json_and_geojson(tmp_path) -> None:

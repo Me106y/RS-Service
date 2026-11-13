@@ -599,6 +599,7 @@ _PROFILE_FIELDS = {
     "sensor_type",
     "sensor_params",
     "swath_km",
+    "along_track_km",
     "along_track_half_angle_deg",
     "min_elevation_deg",
     "pointing",

@@ -106,7 +106,8 @@ class PlanCreate(BaseModel):
         default=DEFAULT_SENSOR_TYPES, min_length=1
     )
     max_resolution_m: float = Field(default=10.0, gt=0, le=10_000.0)
-    pointing: Literal["nadir", "targeted"] = "nadir"
+    # 只保留星下点：目标指向等于让每颗星都盯着 AOI 形心，没有星座做得到。
+    pointing: Literal["nadir"] = "nadir"
     grid_size_km: float = Field(default=5.0, gt=0, le=50.0)
     detection_step_s: int = Field(default=10, ge=1, le=3600)
     selection_time_limit_s: int = Field(default=30, ge=1, le=3600)

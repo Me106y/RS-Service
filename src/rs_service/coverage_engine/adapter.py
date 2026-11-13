@@ -43,7 +43,10 @@ from ..astro import cloud
 # 触发 vendor 的 sys.path 注入，必须在导入 siriagent_skill 之前。
 from . import VENDOR_DIR  # noqa: F401
 
-ALONG_TRACK_HALF_ANGLE_DEG = 60.0
+# 推扫相机沿轨只有一个线阵；离散采样之间必须用「v·dt/2」的沿轨半长补齐，
+# 否则 10 s 采样之间会漏掉约 75 km。取 0.55·v·dt（约 10% 重叠）。
+ALONG_TRACK_GROUND_SPEED_KMS = 7.5
+ALONG_TRACK_SMEAR_FACTOR = 0.55
 # 成像门限：非 SAR 最低仰角 10°；光学/高光谱另要求地面太阳高度 ≥10°。
 # 与 docs/PHASE2-REQUIREMENTS.md §4.6 及过境列表的光学可用口径一致。
 MIN_IMAGING_ELEVATION_DEG = 10.0
@@ -287,6 +290,16 @@ def _write_workspace(
     return root
 
 
+def _result_step_s(result: dict[str, Any]) -> float:
+    return float((result.get("input_summary") or {}).get("detection_step_s") or 60.0)
+
+
+def _along_track_half_km(step_s: float) -> float:
+    """推扫相机在 dt 秒内前进的距离之半：覆盖靠这段“沿轨糊”连起来。"""
+
+    return ALONG_TRACK_SMEAR_FACTOR * ALONG_TRACK_GROUND_SPEED_KMS * float(step_s)
+
+
 def _payload(
     spec: PlanSpec,
     candidates: list[Candidate],
@@ -298,7 +311,7 @@ def _payload(
             "norad_id": item.norad_id,
             "sensor_type": "Rectangular",
             "swath_km": item.swath_km,
-            "along_track_half_angle_deg": ALONG_TRACK_HALF_ANGLE_DEG,
+            "along_track_km": _along_track_half_km(spec.detection_step_s),
             "min_elevation_deg": MIN_IMAGING_ELEVATION_DEG,
         }
         if item.sensor_class != "SAR":
@@ -309,8 +322,6 @@ def _payload(
                     "params": f"Min {OPTICAL_SUN_MIN_DEG:g}",
                 }
             ]
-        if spec.pointing == "targeted":
-            override["pointing"] = {"type": "Targeted"}
         overrides.append(override)
 
     start = spec.start_utc.astimezone(UTC).replace(microsecond=0)
@@ -703,7 +714,9 @@ def _annotate_result(
     if isinstance(notes, list):
         notes.append(
             "候选来自 RS-Service 数据库：分辨率取自 sensor.raw_spec、幅宽取自 sensor.swath_km；"
-            f"沿轨半角固定 {ALONG_TRACK_HALF_ANGLE_DEG:g}°（场景假设）。"
+            "沿轨按检测步长 "
+            f"{_result_step_s(result):g}s 换算成 {_along_track_half_km(_result_step_s(result)):.1f}km "
+            "半长（推扫靠运动累积，不是 60° 扇形）。"
         )
         if blocked:
             notes.append(f"未参与选星 {len(blocked)} 颗，原因见 blocked_satellites。")
@@ -827,7 +840,8 @@ def run_plan(spec: PlanSpec) -> dict[str, Any]:
 
 
 __all__ = [
-    "ALONG_TRACK_HALF_ANGLE_DEG",
+    "ALONG_TRACK_GROUND_SPEED_KMS",
+    "ALONG_TRACK_SMEAR_FACTOR",
     "Candidate",
     "PlanError",
     "PlanSpec",

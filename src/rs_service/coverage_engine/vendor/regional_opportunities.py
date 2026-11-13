@@ -195,6 +195,7 @@ def _effective_satellite_cfg(cfg: Mapping[str, Any], sat_id: int) -> dict[str, A
             "sensor_type",
             "sensor_params",
             "swath_km",
+            "along_track_km",
             "along_track_half_angle_deg",
             "min_elevation_deg",
             "pointing",
@@ -388,10 +389,18 @@ def _complex_pattern_grid(
             vertical = cov.swath_to_half_angle_deg(altitude_km, swath_km)[:, None]
         else:
             vertical = float(params[0]) if params else 40.0
-        horizontal = float(
-            cfg.get("along_track_half_angle_deg")
-            or (params[1] if len(params) > 1 else 60.0)
-        )
+        along_track_km = float(cfg.get("along_track_km") or 0.0)
+        if along_track_km > 0.0:
+            if altitude_km is None:
+                raise ValueError("Rectangular 沿轨长度口径缺少逐时刻卫星高度。")
+            # 推扫相机沿轨只有一个线阵，离散采样之间用半长 v·dt/2 的“糊”补齐；
+            # 按逐时刻高度换算成张角，避免不同轨道高度下糊的长度漂移。
+            horizontal = np.degrees(np.arctan2(along_track_km, altitude_km))[:, None]
+        else:
+            horizontal = float(
+                cfg.get("along_track_half_angle_deg")
+                or (params[1] if len(params) > 1 else 60.0)
+            )
         ok = (
             (z > 0.0)
             & (np.abs(np.degrees(np.arctan2(y, z))) <= vertical)
