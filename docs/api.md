@@ -48,7 +48,8 @@ curl -s http://127.0.0.1:8766/api/v1/satellites/40118
 | GET | `/plans/{job_id}/report` | 报告 HTML 本体（按 `run_id` 扫 `<task>/` 子目录） |
 | GET | `/plans/history` | 历史报告列表（只读 `meta.json`），`?operation=task1&limit=200` |
 
-任务：`task1` 最少星达覆盖率（面积口径）、`task2` 最少星达重访、`task3` 给定星数最大化覆盖面积（面积口径）、
+- `pointing` 只有 `nadir`（星下点）；目标指向已取消（422）。沿轨按检测步长换算成推扫糊（10 s → 41.2 km 半长），不再固定 60°。
+- 任务：`task1` 最少星达覆盖率（面积口径）、`task2` 最少星达重访、`task3` 给定星数最大化覆盖面积（面积口径）、
 `task4` 给定星数最小化面积分位 MRT、`task5` 给定星数最小化 ART。
 
 - AOI 支持省/市/区县 adcode 或 `POLYGON` WKT；只允许浙江省内。
