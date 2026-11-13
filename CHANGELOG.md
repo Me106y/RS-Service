@@ -2,6 +2,12 @@
 
 RS-Service 的用户可见变化。版本规则见 [VERSIONING.md](https://github.com/Me106y/SIRIAgent/blob/main/docs/VERSIONING.md)。
 
+## [1.8.2] - 2026-11-13
+
+### Fixed
+
+- task5（给定星数最小化 ART）的报告不再写「达标面积 0.0%」：首屏 KPI 改为「面积加权 ART 20.6 h」，去掉时间覆盖率；薄弱区表保留「时间覆盖率 + ART」两列。task5 本来就没有面积目标，`qualified_area_pct` 为 `null` 被当成 0.0% 显示，和 task2 之前那个问题同源。
+
 ## [1.8.1] - 2026-11-13
 
 ### Fixed

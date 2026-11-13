@@ -164,6 +164,11 @@ def _notes(result: dict[str, Any]) -> list[str]:
             "覆盖面积：时间窗内至少被选中卫星覆盖一次的网格面积占比；"
             "面积按覆盖网格累加，不设额外时间门槛。"
         )
+    elif operation in {"task5", "task_5_min_area_weighted_art"}:
+        notes.append(
+            "面积加权 ART：按网格面积加权的平均重访间隔（相邻两次覆盖之间的平均空档）；"
+            "task5 不设面积目标，报告不展示面积达标率。"
+        )
     elif operation in {"task2", "task_2_min_satellites_mrt"}:
         minutes = _task2_mrt_target_min(result)
         cards = result.get("summary_cards") or {}
@@ -288,8 +293,9 @@ def render_report(result: dict[str, Any], run_id: str | None = None) -> str:
     is_task3 = operation in {"task3", "task_3_max_qualified_area"}
     is_task4 = operation in {"task4", "task_4_min_area_quantile_mrt"}
     is_task2 = operation in {"task2", "task_2_min_satellites_mrt"}
+    is_task5 = operation in {"task5", "task_5_min_area_weighted_art"}
     # task3/task4 是各自口径，不再展示通用“时间覆盖率”。
-    show_temporal = not is_task1 and not is_task3 and not is_task4
+    show_temporal = not is_task1 and not is_task3 and not is_task4 and not is_task5
     area_target = targets.get("area_pct")
     label = OPERATION_LABELS.get(result.get("operation", ""), result.get("operation", "成图规划"))
     count = int(cards.get("satellite_count") or len(sats))
@@ -312,6 +318,13 @@ def render_report(result: dict[str, Any], run_id: str | None = None) -> str:
         target_label = "覆盖面积"
         target_value = f"{area_pct:.1f}"
         target_unit = "%"
+        budget_label = ""
+        budget_value = ""
+    elif is_task5:
+        # task5 没有“达标面积”这回事：它的 KPI 就是面积加权 ART。
+        target_label = "面积加权 ART"
+        target_value = f"{float(cards.get('area_weighted_art_minutes') or 0.0) / 60.0:.1f}"
+        target_unit = "h"
         budget_label = ""
         budget_value = ""
     elif is_task2:
@@ -342,7 +355,9 @@ def render_report(result: dict[str, Any], run_id: str | None = None) -> str:
         budget_value = ""
     area_met = area_target is not None and area_pct >= float(area_target) - 1e-9
     show_weak = bool(weak) and not is_task1 and (is_task4 or not area_met)
-    weak_metric_mode = "none" if is_task3 else ("mrt" if is_task4 else "all")
+    weak_metric_mode = (
+        "none" if is_task3 else "mrt" if is_task4 else "art" if is_task5 else "all"
+    )
     if is_task4:
         headline = (
             f"{label}：选中 <em>{count}</em> 颗，"
@@ -351,6 +366,11 @@ def render_report(result: dict[str, Any], run_id: str | None = None) -> str:
         )
     elif is_task3:
         headline = f"{label}：选中 <em>{count}</em> 颗，覆盖面积 <em>{area_pct:.1f}%</em>"
+    elif is_task5:
+        headline = (
+            f"{label}：选中 <em>{count}</em> 颗，面积加权 ART "
+            f"<em>{float(cards.get('area_weighted_art_minutes') or 0.0) / 60.0:.1f} h</em>"
+        )
     else:
         headline = f"{label}：选中 <em>{count}</em> 颗，达标面积 <em>{area_pct:.1f}%</em>"
 
