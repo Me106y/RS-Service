@@ -2,6 +2,20 @@
 
 RS-Service 的用户可见变化。版本规则见 [VERSIONING.md](https://github.com/Me106y/SIRIAgent/blob/main/docs/VERSIONING.md)。
 
+## [2.0.0] - 2026-11-16
+
+### Changed
+
+- 成图规划 API 收敛为单场景 `revisit`：`POST /plans` 只接受 `operation="revisit"`、`revisit_hours`（24/48/72）、AOI、分辨率与云量开关；服务端固定 `W=min(3T,168h)`、面积目标 100%、`auto_expand=false`、`allow_area_fallback=false`。
+- `GET /plans/{id}` 新增 `progress={stage,label,current,total,pct,elapsed_s,updated_at}`；机会阶段逐星计数，选星阶段 1/2、2/2；`job.progress` 在进程内更新，重启丢任务。
+- 选星贪心新增 60s 墙钟上限（`greedy_time_limit_s`），到点返回最佳努力并标 `time_limited`；不可行时额外计算 `summary_cards.ceiling_area_pct`（全目录上限）并给结构化 `suggestion`。
+- 报告：`revisit` 走单场景标签；KPI 改为最少卫星 / 达标面积（≤T）/ 全目录上限 / 评估窗口；地图与回放轴铺满主区，正文 15px；未达标时标题写“未达标，全目录上限 X%”，不再展示薄弱区。
+- AOI 只允许市/区县/自定义 ≤20,000 km²；省级 AOI 返回 `aoi_too_large`；`sensor_types` 只接受 optical，`max_resolution_m` 上限 10。
+
+### Known
+
+- 目录扩容与杭州 72h / 24h / 100% 闸门未完成；当前 ≤10m 光学 53 颗实测全目录上限 9.7%，结果按“未达标 + 放宽分辨率建议”展示。
+
 ## [1.9.0] - 2026-11-13
 
 ### Changed

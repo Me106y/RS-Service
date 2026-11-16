@@ -37,36 +37,31 @@ curl -s http://127.0.0.1:8766/api/v1/satellites/40118
 
 ## 成图规划 `/api/v1/plans`
 
-5 个选星任务由 RS-Service 的后端流程承担；前端只提交参数、轮询状态、请求报告。
+v2.0.0 只有一个场景 `revisit`：给定区域 + 重访时间 T，求最少卫星；面积目标固定 100%。旧 task1~task5 的新入口已移除，旧报告仍可读。
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/plan-options` | 任务、必填/高级字段、默认值、传感器类型、AOI 列表、可规划数量 |
-| POST | `/plans` | 建任务，返回 202 + `job_id`；任务在进程内排队 |
-| GET | `/plans/{job_id}` | `queued` / `running` / `completed` / `failed` + 结果或错误 |
-| POST | `/plans/{job_id}/report` | 用已完成结果渲染四节 HTML，返回 `reports/imaging-plan/<task>/<job_id>/...` 相对路径 |
-| GET | `/plans/{job_id}/report` | 报告 HTML 本体（按 `run_id` 扫 `<task>/` 子目录） |
-| GET | `/plans/history` | 历史报告列表（只读 `meta.json`），`?operation=task1&limit=200` |
+| GET | `/plan-options` | 单任务 `revisit`、T 档位、窗口规则、AOI（市/区县）、可规划数量、TLE 状态 |
+| POST | `/plans` | `{operation:"revisit", aoi_code|aoi_wkt, revisit_hours, start_utc?, max_resolution_m?, cloud_filter?}`；返回 202 + `job_id` |
+| GET | `/plans/{job_id}` | `queued` / `running` / `completed` / `failed` + `progress` + 结果或错误 |
+| POST | `/plans/{job_id}/report` | 用已完成结果渲染四节 HTML，落 `reports/imaging-plan/revisit/<job_id>/` |
+| GET | `/plans/{job_id}/report` | 报告 HTML 本体（按 `run_id` 扫任务子目录） |
+| GET | `/plans/history` | 历史报告扁平列表（只读 `meta.json`）；新 run `task="revisit"`，旧 run 保留 `task1..task5` |
 
-- `pointing` 只有 `nadir`（星下点）；目标指向已取消（422）。沿轨按检测步长换算成推扫糊（10 s → 41.2 km 半长），不再固定 60°。
-- 任务：`task1` 最少星达覆盖率（面积口径）、`task2` 最少星达重访、`task3` 给定星数最大化覆盖面积（面积口径）、
-`task4` 给定星数最小化面积分位 MRT、`task5` 给定星数最小化 ART。
-
-- AOI 支持省/市/区县 adcode 或 `POLYGON` WKT；只允许浙江省内。
-- 目录 65 颗（61 光学 + 4 高光谱）；SAR 缺原生入射角带，暂不参与。
-- 云量默认按 AOI 内网格代表点取 Open-Meteo 逐小时 `cloud_cover`，逐网格剔除 `> 70%` 的访问（采样点最多 4×4）；不再用 AOI 质心单点代表全区域。取不到时不过滤并在 assumptions 说明。
-- 成像门限：非 SAR 最小仰角 ≥10°；光学/高光谱另要求目标地面太阳高度 ≥10°（`RS_OPTICAL_SUN_MIN_DEG`，默认 10）；SAR 不看太阳。夜间/低仰角窗口不进入覆盖与选星，结果 `imaging_constraints` 与 assumptions 会记录。
-- `task1` 按面积口径：至少成像一次即视为覆盖（内部时间阈值固定 0.001%），默认面积目标 90%，`temporal_coverage_target_pct` 会被忽略；结果 `targets.area_pct` 是面积目标、`targets.temporal_coverage_pct` 为 `null`。报告不展示单格时间覆盖率与薄弱区。
-- `task3` 按面积口径：星数固定，时间窗内至少覆盖一次即计入覆盖面积；内部时间阈值固定 0.001%，不再要求也不再使用 `temporal_coverage_target_pct`。结果 `summary_cards.covered_area_pct`（兼容字段 `qualified_area_pct`）就是覆盖面积，`targets.temporal_coverage_pct` / `targets.area_pct` 为 `null`。报告不展示时间覆盖率/MRT，薄弱区只列网格与面积。
-- `task4` 默认 `exact_budget=True`：给定 N 颗就补满 N 颗，按 N% 面积分位 MRT 做固定预算贪心；报告首屏显示「N% 面积分位 MRT」与「星数预算 / 实际」，不展示时间覆盖率；覆盖与回放显示联合覆盖，不是 MRT KPI。
-- `auto_expand` 只允许 `task1`：先按请求窗口算，不达标再按 72h → 168h 阶梯扩窗（最多 3 次求解，最大 7 天；超过 7 天的 TLE 按口径拒绝过境）。请求 72h 时也会继续扩到 168h。结果 `window` 返回请求/实际窗口和 `expanded`，报告按实际窗口展示。
+- 口径：`W = min(3T, 168h)`；T 只接受 24 / 48 / 72；面积目标固定 100，`allow_area_fallback=false`；`auto_expand=false`。T=72h 时 W 封顶 168h（2.33T），结果 `window.capped_by_tle=true` 并标注。
+- 判定：每个 5 km 网格代表点的最长重访间隔（**含夜间与窗口首尾空档**）≤ T；全部网格达标才算可行。`summary_cards.qualified_area_pct` 是达标面积；`summary_cards.ceiling_area_pct` 是全部候选星一起算的“全目录上限”，不可行时用来区分“目录不够”与“算法没找到”。
+- 结果字段：`targets.revisit_hours`、`targets.area_pct=100`、`targets.temporal_coverage_pct=null`；`window.window_rule="3T"`、`window.used_horizon_h`、`window.capped_by_tle`；`optimality ∈ proven_optimal|time_limited|infeasible_heuristic`；`suggestion` 仅在不可行且 ≤10m 时给出“放宽到 ≤1km 可 100%”的结构化建议（不自动切换）。
+- 进度：`GET /plans/{job_id}` 的 `progress={stage,label,current,total,pct,elapsed_s,updated_at}`；阶段 `prepare/grid/opportunities/cloud/selection/metrics/playback/done`。机会阶段 `current/total` 是已传播卫星数；选星阶段 1/2、2/2。前端 1.2s 轮询，不提供 ETA。
+- AOI：只支持市/区县 adcode 或浙江省内 `POLYGON` WKT；自定义面积 >20,000 km² 返回 `aoi_too_large`，省级 AOI 也返回 `aoi_too_large`。
+- 载荷：只对光学开放；`sensor_types` 固定 `["optical"]`；`max_resolution_m` 只接受 1/2/5/10。目录 65 颗（61 光学 + 4 高光谱），≤10m 光学可规划 53 颗；高光谱保留在星历，不参与本场景。
+- 云量：默认**不过滤**；`cloud_filter=true` 时按 AOI 内网格代表点取 Open-Meteo 逐小时 `cloud_cover`，逐网格剔除 >70% 的访问；取不到时不过滤并在 assumptions 说明。
+- 成像门限：非 SAR 最小仰角 ≥10°；光学另要求目标地面太阳高度 ≥10°（`RS_OPTICAL_SUN_MIN_DEG`，默认 10）；夜间/低仰角窗口不进入覆盖与选星。
+- 选星限时：贪心 ≤60s（`greedy_time_limit_s`），ILP ≤30s（`selection_time_limit_s`）；到点返回当前最好集合，`optimality=time_limited`。不可行时不允许返回“0 颗星、0%”，必须有最佳努力与全目录上限。
 - TLE 年龄按 `tle_record.epoch_utc` 实时计算：>72h 标 degraded，全部候选 >168h 时返回 `tle_stale`；`plan-options.tle` 暴露 `max_age_hours` / `degraded` / `stale`。
-- `rs-service-sync.timer` 每天 03:00 同步；TLE 过期时先跑一次 `rs-service sync`。
-- 任务状态在进程内；重启丢任务，报告文件保留。
-- 报告落盘：`reports/imaging-plan/<task>/<run_id>/{plan.json,report.html,meta.json}`，`<task>` 是 `task1`..`task5`（旧 slug 自动归一）；根上 `latest` 软链指向最近一份（`<task>/<run_id>`）。`meta.json` 是历史列表要用的精简元数据（任务、区域、窗口、星数、KPI、生成时间），避免为了列表去读几百 KB 的 `plan.json`。
-- `GET /plans/history` 返回 `{ok, root, runs[], total, by_task}`；`runs` 按 `created_at` 倒序，每项含 `run_id / task / task_label / aoi_kind(city|custom) / area_name / window_start / window_end / sat_count / kpi{key,label,value,unit} / feasible / created_at / relative_report / relative_plan / has_report`。`by_task` 统计全部任务（不受 `operation` 过滤影响），方便前端渲染组头；`limit` 上限 500。
-- KPI 口径随任务：`task1` 达标面积（`qualified_area_pct`）、`task2` 达标面积 = 面积中「单格最长重访间隔 ≤ 目标」的占比（报告标签带重访目标，MRT 含夜间与窗口首尾空档）、`task3` 覆盖面积、`task4` N% 面积分位 MRT（小时）、`task5` 面积加权 ART（报告首屏就是「面积加权 ART」，不出现达标面积/时间覆盖率，薄弱区保留时间覆盖率 + ART 两列）。
-- 报告「覆盖与回放」只显示回放时间（不再显示累计覆盖百分比）；购买按钮在报告加载时问一次 SIRIAgent 的 `/api/purchases`，已买过就显示「已购买」并链到对应购买单。
+- 任务状态在进程内；重启丢任务，报告文件保留；前端用 localStorage 的 job_id 恢复，404 时提示“任务已失效”。
+- 报告落盘：`reports/imaging-plan/revisit/<run_id>/{plan.json,report.html,meta.json}`；旧 task1~task5 目录保留；根上 `latest` 软链指向最近一份。
+- 报告首屏 KPI：最少卫星数 / 达标面积（最长重访 ≤ T · 目标 100%）/ 全目录上限 / 评估窗口；不再展示时间覆盖率与面积加权 MRT 作为主 KPI；不可行时标题写“未达标，全目录上限 X%”，并给出放宽分辨率的实测建议。
+- `GET /plans/history` 返回 `{ok, root, runs[], total, by_task}`；`runs` 按 `created_at` 倒序，字段沿用 `run_id/task/task_label/aoi_kind/area_name/window_start/window_end/sat_count/kpi/feasible/created_at/relative_report/relative_plan/has_report`；`revisit` 的 KPI 是「达标面积（≤T）」。
 
 ## 遥感解译 `/api/v1/interpret`
 

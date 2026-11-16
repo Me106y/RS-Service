@@ -187,7 +187,7 @@ def test_run_plan_auto_expand_stops_on_first_feasible(monkeypatch) -> None:
 
     calls: list[float] = []
 
-    def fake_run(spec: PlanSpec) -> dict:
+    def fake_run(spec: PlanSpec, progress=None) -> dict:
         calls.append(spec.horizon_h)
         return {"feasible": spec.horizon_h >= 72.0, "assumptions": []}
 
@@ -204,7 +204,7 @@ def test_run_plan_auto_expand_caps_at_168(monkeypatch) -> None:
 
     calls: list[float] = []
 
-    def fake_run(spec: PlanSpec) -> dict:
+    def fake_run(spec: PlanSpec, progress=None) -> dict:
         calls.append(spec.horizon_h)
         return {"feasible": False, "assumptions": []}
 
@@ -230,116 +230,43 @@ def test_task1_auto_expand_ladder_only_for_task1() -> None:
     assert _horizons(task2) == [8.0]
 
 
-def test_auto_expand_rejected_for_other_tasks() -> None:
+def test_revisit_has_no_auto_expand() -> None:
+    with pytest.raises(ValidationError):
+        PlanCreate(operation="task2", aoi_code="330100", mrt_target_minutes=24)
+    model = PlanCreate(operation="revisit", aoi_code="330100", revisit_hours=24)
+    assert model.to_spec().auto_expand is False
+
+
+def test_single_revisit_task() -> None:
+    assert [item["operation"] for item in TASKS] == ["revisit"]
+
+
+def test_plan_create_requires_aoi() -> None:
+    with pytest.raises(ValidationError):
+        PlanCreate(operation="revisit", revisit_hours=24)
     with pytest.raises(ValidationError):
         PlanCreate(
-            operation="task2",
-            aoi_code="330100",
-            mrt_target_minutes=24,
-            auto_expand=True,
-        )
-    model = PlanCreate(
-        operation="task1",
-        aoi_code="330100",
-        temporal_coverage_target_pct=10,
-        auto_expand=True,
-    )
-    assert model.to_spec().auto_expand is True
-
-
-def test_five_tasks_only() -> None:
-    assert [item["operation"] for item in TASKS] == [
-        "task1",
-        "task2",
-        "task3",
-        "task4",
-        "task5",
-    ]
-
-
-def test_plan_create_requires_aoi_and_task_fields() -> None:
-    with pytest.raises(ValidationError):
-        PlanCreate(operation="task1", temporal_coverage_target_pct=90)
-    with pytest.raises(ValidationError):
-        PlanCreate(operation="task2", aoi_code="330100")
-    with pytest.raises(ValidationError):
-        PlanCreate(
-            operation="task1",
+            operation="revisit",
             aoi_code="330100",
             aoi_wkt="POLYGON ((120 30, 121 30, 121 31, 120 30))",
-            temporal_coverage_target_pct=90,
         )
-    # task1 是面积口径，不再要求时间覆盖率；缺省面积目标按 90%。
-    spec = PlanCreate(operation="task1", aoi_code="330100").to_spec()
-    assert spec.area_target_pct == 90.0
-    assert spec.temporal_coverage_target_pct == pytest.approx(0.001)
+    spec = PlanCreate(operation="revisit", aoi_code="330100").to_spec()
+    assert spec.area_target_pct == 100.0
+    assert spec.temporal_coverage_target_pct is None
 
 
 def test_plan_create_to_spec_defaults_timezone() -> None:
     model = PlanCreate(
-        operation="task2",
+        operation="revisit",
         aoi_code="330100",
-        mrt_target_minutes=24,
+        revisit_hours=24,
         start_utc=datetime(2026, 11, 5),
     )
     spec = model.to_spec()
     assert spec.start_utc.tzinfo is not None
-    assert spec.sensor_types == ("optical", "hyperspectral", "sar")
-
-
-def test_task1_is_area_only_regardless_of_temporal_target() -> None:
-    """回归：task1 必须按面积口径算，忽略旧客户端传来的单格时间覆盖率。
-
-    否则 90% 的单格时间阈值在 72 h 内不可达，达标面积恒为 0.0%。
-    """
-
-    model = PlanCreate(
-        operation="task1",
-        aoi_code="330100",
-        temporal_coverage_target_pct=90.0,
-        area_target_pct=90.0,
-    )
-    spec = model.to_spec()
-    assert spec.temporal_coverage_target_pct == pytest.approx(0.001)
-    assert spec.area_target_pct == 90.0
-    assert spec.fallback_area_target_pct == 90.0
-
-
-def test_task3_is_area_only_regardless_of_temporal_target() -> None:
-    """回归：task3 是“给定星数最大化覆盖面积”，不再要求/使用时间覆盖率目标。"""
-
-    model = PlanCreate(
-        operation="task3",
-        aoi_code="330100",
-        n_budget=3,
-        temporal_coverage_target_pct=50.0,
-    )
-    spec = model.to_spec()
-    assert spec.n_budget == 3
-    assert spec.temporal_coverage_target_pct == pytest.approx(0.001)
-    # 新客户端不再传目标覆盖率也必须能提交。
-    spec2 = PlanCreate(operation="task3", aoi_code="330100", n_budget=3).to_spec()
-    assert spec2.temporal_coverage_target_pct == pytest.approx(0.001)
-
-
-def test_task3_annotates_covered_area_and_hides_temporal_target() -> None:
-    result = {
-        "operation": "task3",
-        "selection": {
-            "recommended_result": {
-                "temporal_coverage_target_pct": 0.001,
-                "area_target_pct": 90.0,
-                "mrt_target_minutes": None,
-            }
-        },
-        "summary_cards": {"qualified_area_pct": 96.9},
-    }
-    from rs_service.coverage_engine.adapter import _annotate_result
-
-    _annotate_result(result, [], [], {}, {})
-    assert result["targets"]["temporal_coverage_pct"] is None
-    assert result["targets"]["area_pct"] is None
-    assert result["summary_cards"]["covered_area_pct"] == pytest.approx(96.9)
+    assert spec.sensor_types == ("optical",)
+    assert spec.horizon_h == 72.0
+    assert spec.mrt_target_minutes == 1440.0
 
 
 def test_payload_sar_is_exempt_from_solar_constraint() -> None:
@@ -354,25 +281,16 @@ def test_payload_sar_is_exempt_from_solar_constraint() -> None:
     assert "constraints" not in override
 
 
-def test_payload_applies_imaging_gate_to_all_five_tasks() -> None:
-    for operation in ("task1", "task2", "task3", "task4", "task5"):
-        payload = _payload(
-            PlanSpec(operation=operation, aoi_code="330100"),
-            [_candidate()],
-            "330100",
-        )
-        override = payload["satellite_profile_overrides"][0]
-        assert override["min_elevation_deg"] == 10.0
-        assert override["constraints"] == [
-            {"name": "SunGroundElevAngle", "params": "Min 10"}
-        ]
-
-
-def test_task4_defaults_to_exact_budget() -> None:
-    spec = PlanCreate(operation="task4", aoi_code="330100", n_budget=3).to_spec()
-    assert spec.exact_budget is True
-    # 显式关掉时才按最多 N。
-    spec2 = PlanCreate(
-        operation="task4", aoi_code="330100", n_budget=3, exact_budget=False
-    ).to_spec()
-    assert spec2.exact_budget is False
+def test_payload_applies_imaging_gate_to_revisit() -> None:
+    payload = _payload(
+        PlanSpec(operation="revisit", aoi_code="330100", mrt_target_minutes=1440),
+        [_candidate()],
+        "330100",
+    )
+    override = payload["satellite_profile_overrides"][0]
+    assert override["min_elevation_deg"] == 10.0
+    assert override["constraints"] == [
+        {"name": "SunGroundElevAngle", "params": "Min 10"}
+    ]
+    assert payload["operation"] == "task_2_min_satellites_mrt"
+    assert payload["analysis_horizon_h"] == 72.0

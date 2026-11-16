@@ -38,3 +38,29 @@ the golden tests reproducible without a second service.
 
 Do not edit vendored files beyond the three entries above; put integration logic
 in `adapter.py` and keep a note here when a change is unavoidable.
+
+## 4. Progress hook (v2.0.0)
+
+`facade.execute_request` accepts an optional `progress` callback
+`(stage, label, current, total)` and forwards per-satellite fractions from
+`regional_opportunities.compute_regional_opportunities` (which already had a
+`progress` parameter). `run_skill` passes `None`, so the original entry point is
+unchanged. RS-Service uses it to fill `GET /plans/{id}.progress`.
+
+## 5. Time-limited greedy (v2.0.0)
+
+`greedy_select_mrt` accepts `time_limit_s`; on timeout it stops the forward
+selection and reverse-delete, returns the current best set and status
+`time_limited`. `run_regional_mrt_selection` exposes `greedy_time_limit_s` and
+the facade passes `request.greedy_time_limit_s` (default 60s). Without it the
+168h / 180-candidate pool can spend minutes in greedy search.
+
+## 6. Parallel opportunity computation (v2.0.0)
+
+`facade._compute_opportunities` splits the satellite list into contiguous
+groups, runs `compute_regional_opportunities` per group in a thread pool
+(`RS_OPPORTUNITY_WORKERS`, default 8), and merges windows by offsetting
+`sat_index`. With a fixed `start_utc` the merged result is identical to the
+serial path; the 53-satellite / 72h opportunity stage drops from ~4.9s to
+~1.3s on the Xihu district and keeps golden tests unchanged. A per-worker
+`timescale` avoids shared Skyfield state.

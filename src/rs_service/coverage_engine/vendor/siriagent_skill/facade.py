@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dataclass_replace
 from pathlib import Path
 from threading import RLock
 from typing import Any, Callable
@@ -331,6 +333,7 @@ def run_selection_task(
                 min_simultaneous=request.min_simultaneous,
                 method=request.method,
                 time_limit_s=request.selection_time_limit_s,
+                greedy_time_limit_s=request.greedy_time_limit_s,
             )
 
         return _area_constrained_outcome(request, store, run_once)
@@ -455,20 +458,127 @@ def _request_summary(
     return summary
 
 
+
+def _opportunity_workers(total: int) -> int:
+    """并行机会计算的工作线程数；默认最多 8，可用环境变量覆盖。"""
+
+    configured = os.environ.get("RS_OPPORTUNITY_WORKERS")
+    if configured is not None:
+        try:
+            value = int(configured)
+        except ValueError:
+            value = 1
+        return max(1, min(value, max(1, total)))
+    return max(1, min(8, os.cpu_count() or 1, max(1, total)))
+
+
+def _compute_opportunities(
+    satellites: list[Any],
+    grid: Any,
+    start_utc: Any,
+    end_utc: Any,
+    config: dict[str, Any],
+    *,
+    decision_step_s: int,
+    cell_chunk_size: int,
+    timescale: Any,
+    progress: Callable[[str, str, int | None, int | None], None] | None,
+) -> regional_opportunities.OpportunityStore:
+    """按卫星分段并行计算，再按 sat_index 偏移确定性地归并。"""
+
+    total = len(satellites)
+    workers = _opportunity_workers(total)
+    if workers <= 1 or total <= 1:
+        return regional_opportunities.compute_regional_opportunities(
+            satellites,
+            grid,
+            start_utc,
+            end_utc,
+            config,
+            decision_step_s=decision_step_s,
+            cell_chunk_size=cell_chunk_size,
+            timescale=timescale,
+        )
+    chunk = (total + workers - 1) // workers
+    groups = [
+        (offset, satellites[offset : offset + chunk])
+        for offset in range(0, total, chunk)
+    ]
+    stores: list[tuple[int, regional_opportunities.OpportunityStore]] = []
+    done = 0
+    with ThreadPoolExecutor(max_workers=min(workers, len(groups))) as pool:
+        futures = {
+            pool.submit(
+                regional_opportunities.compute_regional_opportunities,
+                subset,
+                grid,
+                start_utc,
+                end_utc,
+                config,
+                decision_step_s=decision_step_s,
+                cell_chunk_size=cell_chunk_size,
+                timescale=None,
+            ): offset
+            for offset, subset in groups
+        }
+        for future in as_completed(futures):
+            offset = futures[future]
+            store = future.result()
+            stores.append((offset, store))
+            done += store.n_satellites
+            if progress is not None:
+                progress("opportunities", f"区域机会：已完成 {done}/{total}", done, total)
+    stores.sort(key=lambda item: item[0])
+    merged: dict[tuple[int, int], tuple[Any, ...]] = {}
+    for offset, store in stores:
+        for (sat_index, grid_index), windows in store.windows.items():
+            merged[(offset + sat_index, grid_index)] = tuple(
+                dataclass_replace(window, sat_index=offset + window.sat_index)
+                for window in windows
+            )
+    first = stores[0][1]
+    metadata = dict(first.metadata)
+    metadata["n_nonempty_pairs"] = len(merged)
+    metadata["propagation_failures"] = [
+        item for _offset, store in stores
+        for item in (store.metadata.get("propagation_failures") or [])
+    ]
+    metadata["partial_propagation_failures"] = [
+        item for _offset, store in stores
+        for item in (store.metadata.get("partial_propagation_failures") or [])
+    ]
+    return regional_opportunities.OpportunityStore(
+        satellites=tuple(satellites),
+        grid=grid,
+        start_utc=first.start_utc,
+        end_utc=first.end_utc,
+        detection_step_s=first.detection_step_s,
+        decision_step_s=first.decision_step_s,
+        windows=merged,
+        metadata=metadata,
+    )
+
+
 def execute_request(
     request: SkillRequest,
     *,
     root: str | Path | None = None,
     window_filter: Callable[[Any], Any] | None = None,
+    progress: Callable[[str, str, int | None, int | None], None] | None = None,
 ) -> dict[str, Any]:
     """完成一次同机 Skill 请求；选星模式内部只传播一次轨道。
 
     ``window_filter`` 是 RS-Service 的云量钩子：在机会窗口算完、选星之前
     接收 OpportunityStore，返回过滤后的 store。默认 None，保持参考实现行为。
+
+    ``progress`` 是 RS-Service 的进度钩子，签名为
+    ``(stage, label, current, total)``；阶段名与 plan_api 的 progress 契约一致。
     """
 
     project_root = Path(root).resolve() if root else PROJECT_ROOT
     total_start = time.perf_counter()
+    if progress is not None:
+        progress("prepare", "读取卫星与 TLE", None, None)
     satellites, timescale, tle_path, tle_hash, catalog_context = _load_satellites(
         request, project_root
     )
@@ -480,6 +590,8 @@ def execute_request(
         )
 
     grid_start = time.perf_counter()
+    if progress is not None:
+        progress("grid", "生成网格", None, None)
     boundary = load_city_boundary(boundary_path, adcode=request.city_adcode)
     grid = build_clipped_grid(boundary, grid_size_m=request.grid_size_km * 1_000.0)
     grid_seconds = time.perf_counter() - grid_start
@@ -519,7 +631,9 @@ def execute_request(
     store = _cached_opportunities(cache_key)
     opportunity_cache_hit = store is not None
     if store is None:
-        store = regional_opportunities.compute_regional_opportunities(
+        if progress is not None:
+            progress("opportunities", "传播与过境机会", 0, len(satellites))
+        store = _compute_opportunities(
             satellites,
             grid,
             request.start_utc,
@@ -528,11 +642,18 @@ def execute_request(
             decision_step_s=request.decision_step_s,
             cell_chunk_size=256,
             timescale=timescale,
+            progress=progress,
         )
         _store_cached_opportunities(cache_key, store)
+    if progress is not None:
+        progress("opportunities", "传播与过境机会", len(satellites), len(satellites))
     opportunity_seconds = time.perf_counter() - opportunity_start
     if window_filter is not None:
+        if progress is not None:
+            progress("cloud", "云量过滤", None, None)
         store = window_filter(store)
+        if progress is not None:
+            progress("cloud", "云量过滤", None, None)
 
     selection_seconds = 0.0
     if request.operation == "coverage_only":
@@ -551,8 +672,12 @@ def execute_request(
         metrics_scope = "all_candidates"
     else:
         selection_start = time.perf_counter()
+        if progress is not None:
+            progress("selection", "选星（贪心 + ILP）", 1, 2)
         outcome = run_selection_task(request, store)
         selection_seconds = time.perf_counter() - selection_start
+        if progress is not None:
+            progress("selection", "选星（贪心 + ILP）", 2, 2)
         metrics_seconds = 0.0  # 选星入口已经用同一份窗口完成复核。
         selected_indices = outcome.selected_sat_indices
         metrics = outcome.metrics
@@ -562,6 +687,8 @@ def execute_request(
         used_area_target_pct = outcome.used_area_target_pct
         metrics_scope = "selected_satellites"
 
+    if progress is not None:
+        progress("metrics", "指标与回放", None, None)
     satellite_table, pass_table = build_human_tables(
         store,
         selected_indices,
