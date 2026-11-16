@@ -17,12 +17,16 @@ DEFAULT_SEED_PATH = Path(__file__).resolve().parents[3] / "data" / "satellites_s
 AOI_PATH = Path(__file__).resolve().parents[3] / "data" / "aoi" / "hangzhou_330100.geojson"
 
 
-def max_km(raw: str | None) -> float | None:
-    """从传感器文本里取最大的 km 数值，作为幅宽近似（仅供前端画足迹）。"""
+def primary_km(raw: str | None) -> float | None:
+    """取主成像模式的幅宽（文本里第一个 km 值）。
+
+    GF-1/GF-6 的 raw_spec 同时写了「2 m / 60 km」和「16 m 宽幅 800 km」；
+    取最大值会把 60 km 的高分模式写成 800 km，覆盖率被系统性放大。
+    """
     if not raw:
         return None
     values = [float(item) for item in re.findall(r"(\d+(?:\.\d+)?)\s*km", raw)]
-    return max(values) if values else None
+    return values[0] if values else None
 
 
 def normalize_alias(value: str) -> str:
@@ -90,10 +94,11 @@ def seed_catalog(session: Session, path: Path | None = None) -> dict[str, int]:
         sensor.sensor_name = item.get("sensor_type")
         sensor.sensor_type = item.get("sensor_type")
         sensor.raw_spec = item.get("raw_spec")
-        sensor.swath_km = max_km(item.get("raw_spec"))
+        sensor.swath_km = primary_km(item.get("raw_spec"))
         if sat.orbit_regime == "GEO":
             sensor.swath_km = 2000.0
         sensor.confidence = item.get("confidence", "unknown")
+        sensor.source_url = item.get("source_url")
         sensor.updated_at = _now()
         sensors += 1
 

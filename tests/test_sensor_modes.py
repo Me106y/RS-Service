@@ -52,8 +52,8 @@ def test_rebuild_persists_and_is_idempotent(seeded_db: str) -> None:
     with session_scope(seeded_db) as session:
         first = rebuild(session)
     assert first["ok"] is True
-    assert first["satellites"] == 65
-    assert first["modes"] == 71
+    assert first["satellites"] == 215
+    assert first["modes"] == 221
     assert first["overrides"] == []
 
     with session_scope(seeded_db) as session:
@@ -65,7 +65,7 @@ def test_rebuild_persists_and_is_idempotent(seeded_db: str) -> None:
         ).scalar_one()
         corr = session.scalar(select(func.count()).select_from(SensorModeCorrection))
     assert second["modes"] == first["modes"]
-    assert total == 71, "重复 rebuild 不应叠加"
+    assert total == 221, "重复 rebuild 不应叠加"
     assert gf1_wfv.swath_km == 800.0
     assert gf1_wfv.confidence == "official"
     assert corr >= 0
