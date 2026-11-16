@@ -2,6 +2,12 @@
 
 RS-Service 的用户可见变化。版本规则见 [VERSIONING.md](https://github.com/Me106y/SIRIAgent/blob/main/docs/VERSIONING.md)。
 
+## [2.1.2] - 2026-11-16
+
+### Added
+
+- 报告「覆盖与回放」为每次访问生成一张小地图，按卫星颜色标出该次覆盖的网格；访问明细表收进折叠区。
+
 ## [2.1.1] - 2026-11-16
 
 ### Changed
