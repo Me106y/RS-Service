@@ -172,18 +172,27 @@ def test_revisit_window_is_three_t_and_capped() -> None:
     assert spec.allow_area_fallback is False
     assert spec.cloud_filter is False
 
-    capped = PlanCreate(operation="revisit", aoi_code="330100", revisit_hours=72).to_spec()
-    assert capped.horizon_h == 168.0
+    seventy_two = PlanCreate(operation="revisit", aoi_code="330100", revisit_hours=72).to_spec()
+    assert seventy_two.horizon_h == 216.0
+
+    full = PlanCreate(operation="revisit", aoi_code="330100", revisit_hours=112).to_spec()
+    assert full.horizon_h == 336.0
+
+    capped = PlanCreate(operation="revisit", aoi_code="330100", revisit_hours=168).to_spec()
+    assert capped.horizon_h == 336.0
 
     with pytest.raises(ValidationError):
-        PlanCreate(operation="revisit", aoi_code="330100", revisit_hours=24)
+        PlanCreate(operation="revisit", aoi_code="330100", revisit_hours=47)
 
 
 def test_plan_options_exposes_only_revisit() -> None:
     client = TestClient(create_app())
     body = client.get("/api/v1/plan-options").json()
     assert [task["operation"] for task in body["tasks"]] == ["revisit"]
-    assert body["revisit"]["hours"] == [48, 72]
+    assert body["revisit"]["min_hours"] == 48
+    assert body["revisit"]["max_hours"] == 168
+    assert body["revisit"]["default_hours"] == 48
+    assert body["revisit"]["window_cap_hours"] == 336
     assert body["revisit"]["area_target_pct"] == 100
     assert body["aoi_limits"]["max_area_km2"] == 20000
     assert all(item["level"] != "province" for item in body["aoi"])
