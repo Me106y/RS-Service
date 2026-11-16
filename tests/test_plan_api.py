@@ -3,9 +3,8 @@ from __future__ import annotations
 import time
 
 import pytest
-from pydantic import ValidationError
-
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from rs_service import plan_api
 from rs_service.api.app import create_app

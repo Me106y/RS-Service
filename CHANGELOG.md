@@ -2,6 +2,12 @@
 
 RS-Service 的用户可见变化。版本规则见 [VERSIONING.md](https://github.com/Me106y/SIRIAgent/blob/main/docs/VERSIONING.md)。
 
+## [2.1.8] - 2026-11-16
+
+### Tests
+
+- 修正 `test_plan_api.py` 的 import 排序，ruff 恢复全绿。
+
 ## [2.1.7] - 2026-11-16
 
 ### Changed
