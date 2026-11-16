@@ -117,6 +117,12 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
 input[type=range]::-moz-range-track{height:3px;background:var(--line);border-radius:2px}
 input[type=range]::-moz-range-thumb{width:12px;height:12px;border:0;border-radius:50%;background:var(--amber);box-shadow:0 0 0 4px rgba(240,165,43,.16)}
 .clock{font-family:var(--mono);font-size:13.5px;color:var(--txt);font-variant-numeric:tabular-nums;min-width:96px;text-align:right}
+.access-head{display:flex;align-items:baseline;gap:12px;padding:12px 16px 0;font-size:13px;color:var(--muted)}
+.access-head strong{font-family:var(--mono);font-size:15px;color:var(--txt);font-weight:600}
+.access-table{margin:8px 16px 14px;width:calc(100% - 32px);font-size:13.5px}
+.access-table th{padding:7px 8px}
+.access-table td{padding:7px 8px;border-bottom:1px solid var(--line-soft)}
+.access-table tr:last-child td{border-bottom:0}
 .legend{display:flex;flex-wrap:wrap;gap:18px;padding:12px 16px 14px;font-size:13px;color:var(--muted);border-top:1px solid var(--line-soft)}
 .legend .swatch{vertical-align:0}
 
@@ -301,9 +307,21 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
 
   <section id="cover">
     <h2>覆盖与回放</h2>
-    <p class="lede">每个点是一个裁剪网格单元；颜色表示覆盖该网格总时长最多的卫星。拖动时间轴查看覆盖累积，点按播放按 {{ speed_label }} 推进。</p>
+    <p class="lede">每个点是一个裁剪网格单元；颜色表示覆盖该网格总时长最多的卫星。{% if access_count %}本窗口共 <b>{{ access_count }}</b> 次访问，下表列出每次访问的时间与用到的卫星。{% else %}拖动时间轴查看覆盖累积，点按播放按 {{ speed_label }} 推进。{% endif %}</p>
     <div class="mapwrap">
       <canvas id="map" width="1280" height="720" role="img" aria-label="覆盖分布与回放"></canvas>
+      {% if access_count %}
+      <div class="access-head"><strong>共 {{ access_count }} 次访问</strong><span>一次访问 = 同一时间段内若干净卫星的过境；颜色仍按网格归属卫星。</span></div>
+      <table class="access-table"><thead><tr><th class="num">#</th><th>时间</th><th>卫星</th><th class="num">覆盖</th><th class="num">时长</th></tr></thead><tbody>
+      {% for a in accesses %}<tr>
+        <td class="num">{{ a.index }}</td>
+        <td class="mono">{{ a.start_label }}–{{ a.end_label }}</td>
+        <td>{{ a.satellites | map(attribute="name") | join("、") }}</td>
+        <td class="num">{{ a.cells }} 格</td>
+        <td class="num">{{ "%.1f"|format(a.duration_minutes) }} min</td>
+      </tr>{% endfor %}
+      </tbody></table>
+      {% else %}
       <div class="transport">
         <button class="play" id="play" aria-label="播放">
           <svg id="ico" viewBox="0 0 16 16"><path d="M4 2l10 6-10 6z"/></svg>
@@ -311,6 +329,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
         <input id="scrub" type="range" min="0" max="{{ events_count }}" value="0" step="1" aria-label="回放时间轴">
         <div class="clock"><span id="now">—</span></div>
       </div>
+      {% endif %}
       <div class="legend">
         {% for s in sats %}<span><span class="swatch" style="--c:{{ s.color }};--c-light:{{ s.color_light }}"></span>{{ s.name }}</span>{% endfor %}
         <span><span class="swatch" style="--c:var(--map-empty)"></span>未覆盖</span>
@@ -407,7 +426,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
   var nowEl = document.getElementById('now');
   var btn = document.getElementById('play');
   var ico = document.getElementById('ico');
-  var timer = null, idx = 0;
+  var timer = null, idx = ev.length;
 
   function label(i){
     if (i<=0) return D.start_label;
@@ -416,27 +435,28 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
   function paint(i){
     idx = i;
     draw(i);
-    nowEl.textContent = label(i);
-  }
-
-  scrub.addEventListener('input', function(){ stop(); paint(+scrub.value); });
-  function tick(){
-    if (idx >= ev.length){ stop(); return; }
-    idx++; scrub.value = idx; paint(idx);
-    if (idx >= ev.length) stop();
-  }
-  function play(){
-    if (idx >= ev.length) { idx = 0; scrub.value = 0; paint(0); }
-    timer = setInterval(tick, {{ tick_ms }});
-    ico.innerHTML = '<path d="M4 3h3v10H4zM9 3h3v10H9z"/>';
-    btn.setAttribute('aria-label','暂停');
+    if (nowEl) nowEl.textContent = label(i);
   }
   function stop(){
     if (timer){ clearInterval(timer); timer = null; }
-    ico.innerHTML = '<path d="M4 2l10 6-10 6z"/>';
-    btn.setAttribute('aria-label','播放');
+    if (ico) ico.innerHTML = '<path d="M4 2l10 6-10 6z"/>';
+    if (btn) btn.setAttribute('aria-label','播放');
   }
-  btn.addEventListener('click', function(){ timer ? stop() : play(); });
+  if (scrub && btn && ico) {
+    scrub.addEventListener('input', function(){ stop(); paint(+scrub.value); });
+    var tick = function(){
+      if (idx >= ev.length){ stop(); return; }
+      idx++; scrub.value = idx; paint(idx);
+      if (idx >= ev.length) stop();
+    };
+    var play = function(){
+      if (idx >= ev.length) { idx = 0; scrub.value = 0; paint(0); }
+      timer = setInterval(tick, {{ tick_ms }});
+      ico.innerHTML = '<path d="M4 3h3v10H4zM9 3h3v10H9z"/>';
+      btn.setAttribute('aria-label','暂停');
+    };
+    btn.addEventListener('click', function(){ timer ? stop() : play(); });
+  }
 
   // 侧栏导航：原生锚点 + 兜底 scrollIntoView，并高亮当前节
   var links = Array.prototype.slice.call(document.querySelectorAll('nav a[href^="#"]'));
@@ -500,7 +520,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
 
   // 默认停在最终累积状态：报告先给结论，播放键再从 0 回放
   idx = ev.length;
-  scrub.value = idx;
+  if (scrub) scrub.value = idx;
   applyTheme(document.documentElement.dataset.theme === 'light' ? 'light' : 'dark', false);
   // 入场：一次淡入，不重复动画
   cv.style.opacity = 0; cv.style.transition = 'opacity .5s ease-out';
