@@ -1895,6 +1895,54 @@
    "confidence": "approx",
    "source_url": "https://www.cresda.com/",
    "model": "GF-14"
+  },
+  {
+   "norad": 40697,
+   "name": "SENTINEL-2A",
+   "operator": "ESA",
+   "country": "EU",
+   "category": "civil",
+   "object_type": "payload",
+   "status": "active",
+   "orbit_regime": "LEO",
+   "payload_public": true,
+   "sensor_type": "optical",
+   "raw_spec": "10 m 多光谱；290 km",
+   "confidence": "official",
+   "source_url": "https://www.esa.int/Applications/Observing_the_Earth/Copernicus/Sentinel-2",
+   "model": "S2A"
+  },
+  {
+   "norad": 42063,
+   "name": "SENTINEL-2B",
+   "operator": "ESA",
+   "country": "EU",
+   "category": "civil",
+   "object_type": "payload",
+   "status": "active",
+   "orbit_regime": "LEO",
+   "payload_public": true,
+   "sensor_type": "optical",
+   "raw_spec": "10 m 多光谱；290 km",
+   "confidence": "official",
+   "source_url": "https://www.esa.int/Applications/Observing_the_Earth/Copernicus/Sentinel-2",
+   "model": "S2B"
+  },
+  {
+   "norad": 60989,
+   "name": "SENTINEL-2C",
+   "operator": "ESA",
+   "country": "EU",
+   "category": "civil",
+   "object_type": "payload",
+   "status": "active",
+   "orbit_regime": "LEO",
+   "payload_public": true,
+   "sensor_type": "optical",
+   "raw_spec": "10 m 多光谱；290 km",
+   "confidence": "official",
+   "source_url": "https://www.esa.int/Applications/Observing_the_Earth/Copernicus/Sentinel-2",
+   "model": "S2C"
   }
  ]
 }

@@ -52,7 +52,7 @@ def test_rebuild_persists_and_is_idempotent(seeded_db: str) -> None:
     with session_scope(seeded_db) as session:
         first = rebuild(session)
     assert first["ok"] is True
-    assert first["satellites"] == 65
+    assert first["satellites"] == 105
     assert first["modes"] == 71
     assert first["overrides"] == []
 

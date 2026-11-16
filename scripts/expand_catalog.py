@@ -61,6 +61,10 @@ NEW_SATS: list[dict] = [
     {"norad": 60249, "name": "GAOFEN-11 05", "model": "GF-11", "raw_spec": "2 m 全色 / 8 m 多光谱；60 km", "confidence": "approx", "source_url": "https://www.cresda.com/"},
     {"norad": 47231, "name": "GAOFEN-14 01", "model": "GF-14", "raw_spec": "2 m 全色 / 8 m 多光谱；60 km", "confidence": "approx", "source_url": "https://www.cresda.com/"},
     {"norad": 66175, "name": "GAOFEN-14 02", "model": "GF-14", "raw_spec": "2 m 全色 / 8 m 多光谱；60 km", "confidence": "approx", "source_url": "https://www.cresda.com/"},
+    # 国际公开：Sentinel-2 三颗，10 m / 290 km，用来补最后 1% 的空档
+    {"norad": 40697, "name": "SENTINEL-2A", "model": "S2A", "raw_spec": "10 m 多光谱；290 km", "confidence": "official", "source_url": "https://www.esa.int/Applications/Observing_the_Earth/Copernicus/Sentinel-2"},
+    {"norad": 42063, "name": "SENTINEL-2B", "model": "S2B", "raw_spec": "10 m 多光谱；290 km", "confidence": "official", "source_url": "https://www.esa.int/Applications/Observing_the_Earth/Copernicus/Sentinel-2"},
+    {"norad": 60989, "name": "SENTINEL-2C", "model": "S2C", "raw_spec": "10 m 多光谱；290 km", "confidence": "official", "source_url": "https://www.esa.int/Applications/Observing_the_Earth/Copernicus/Sentinel-2"},
 ]
 
 
@@ -78,8 +82,12 @@ def main() -> int:
             {
                 "norad": int(item["norad"]),
                 "name": item["name"],
-                "operator": "长光卫星" if "JILIN" in item["name"] else "CRESDA",
-                "country": "CN",
+                "operator": (
+                    "长光卫星" if "JILIN" in item["name"]
+                    else "ESA" if "SENTINEL-2" in item["name"]
+                    else "CRESDA"
+                ),
+                "country": "EU" if "SENTINEL-2" in item["name"] else "CN",
                 "category": "commercial" if "JILIN" in item["name"] else "civil",
                 "object_type": "payload",
                 "status": "active",
