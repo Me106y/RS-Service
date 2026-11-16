@@ -2,6 +2,15 @@
 
 RS-Service 的用户可见变化。版本规则见 [VERSIONING.md](https://github.com/Me106y/SIRIAgent/blob/main/docs/VERSIONING.md)。
 
+## [2.2.0] - 2026-11-16
+
+### Changed
+
+- 重访时间 T 改为可自由设定：整数 48–168h，默认 48；评估窗口 `W = min(3T, 336h)`（14 天上限），不再受 TLE 7 天限制。
+- 取消 TLE 降级与 7 天拒绝策略：`degraded`/`stale` 恒为 false，TLE 年龄只作展示，不再阻塞求解。
+- `PlanCreate.revisit_hours` 改为 `int` + 范围校验；`plan-options` 返回 `min_hours/max_hours/window_cap_hours`，不再返回固定档位。
+- 报告窗口标注改为 `capped_by_horizon`，文案改为 336h 上限。
+
 ## [2.1.8] - 2026-11-16
 
 ### Tests

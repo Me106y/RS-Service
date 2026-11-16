@@ -234,10 +234,7 @@ def _notes(result: dict[str, Any]) -> list[str]:
         notes.append("覆盖面积 0.0%：当前窗口内选中卫星没有覆盖目标区域；可延长窗口或换星。")
     tle = result.get("tle") or {}
     if tle.get("max_age_hours") is not None:
-        notes.append(
-            f"TLE 最大年龄 {tle['max_age_hours']:g} 小时"
-            f"{'（>72h，结果标 degraded）' if tle.get('degraded') else ''}。"
-        )
+        notes.append(f"TLE 最大年龄 {tle['max_age_hours']:g} 小时。")
     notes.append("TLE 每日同步；SGP4 在 LEO 约 1 km/天，结果只用于可行性初判。")
     return list(dict.fromkeys(notes))
 
@@ -410,8 +407,8 @@ def render_report(result: dict[str, Any], run_id: str | None = None) -> str:
         window_end=_bj(end),
         window_hours=hours,
         window_note=window_note or (
-            "受 TLE 7 天上限限制（2.33T）"
-            if window.get("capped_by_tle")
+            "达到 336h 评估窗口上限（14 天）"
+            if window.get("capped_by_horizon")
             else ""
         ),
         ceiling_value=(

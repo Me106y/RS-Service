@@ -48,7 +48,7 @@ v2.0.0 只有一个场景 `revisit`：给定区域 + 重访时间 T，求最少�
 | GET | `/plans/{job_id}/report` | 报告 HTML 本体（按 `run_id` 扫任务子目录） |
 | GET | `/plans/history` | 历史报告扁平列表（只读 `meta.json`）；新 run `task="revisit"`，旧 run 保留 `task1..task5` |
 
-- 口径：`W = min(3T, 168h)`；T 只接受 48 / 72，默认 48；下限 48；面积目标固定 100，`allow_area_fallback=false`；`auto_expand=false`。T=72h 时 W 封顶 168h（2.33T），结果 `window.capped_by_tle=true` 并标注。
+- 口径：`W = min(3T, 336h)`；T 为整数，范围 48–168，默认 48；面积目标固定 100，`allow_area_fallback=false`；`auto_expand=false`。T>112h 时 W 达到 336h 上限（14 天），结果 `window.capped_by_horizon=true` 并标注。
 - 判定：每个 5 km 网格代表点的最长重访间隔（**含夜间与窗口首尾空档**）≤ T；全部网格达标才算可行。`summary_cards.qualified_area_pct` 是达标面积；`summary_cards.ceiling_area_pct` 是全部候选星一起算的“全目录上限”，不可行时用来区分“目录不够”与“算法没找到”。
 - 结果字段：`targets.revisit_hours`、`targets.area_pct=100`、`targets.temporal_coverage_pct=null`；`window.window_rule="3T"`、`window.used_horizon_h`、`window.capped_by_tle`；`optimality ∈ proven_optimal|time_limited|infeasible_heuristic`；`suggestion` 仅在不可行且 ≤10m 时给出“放宽到 ≤1km 可 100%”的结构化建议（不自动切换）。
 - 进度：`GET /plans/{job_id}` 的 `progress={stage,label,current,total,pct,elapsed_s,updated_at}`；阶段 `prepare/grid/opportunities/cloud/selection/metrics/playback/done`。机会阶段 `current/total` 是已传播卫星数；选星阶段 1/2、2/2。前端 1.2s 轮询，不提供 ETA。
@@ -57,7 +57,7 @@ v2.0.0 只有一个场景 `revisit`：给定区域 + 重访时间 T，求最少�
 - 云量：默认**不过滤**；`cloud_filter=true` 时按 AOI 内网格代表点取 Open-Meteo 逐小时 `cloud_cover`，逐网格剔除 >70% 的访问；取不到时不过滤并在 assumptions 说明。
 - 成像门限：非 SAR 最小仰角 ≥10°；光学另要求目标地面太阳高度 ≥10°（`RS_OPTICAL_SUN_MIN_DEG`，默认 10）；夜间/低仰角窗口不进入覆盖与选星。
 - 选星限时：贪心 ≤60s（`greedy_time_limit_s`），ILP ≤30s（`selection_time_limit_s`）；到点返回当前最好集合，`optimality=time_limited`。不可行时不允许返回“0 颗星、0%”，必须有最佳努力与全目录上限。
-- TLE 年龄按 `tle_record.epoch_utc` 实时计算：>72h 标 degraded，全部候选 >168h 时返回 `tle_stale`；`plan-options.tle` 暴露 `max_age_hours` / `degraded` / `stale`。
+- TLE 年龄按 `tle_record.epoch_utc` 实时计算并展示 `max_age_hours`；不再按 72h/7 天做降级或拒绝求解（`degraded`/`stale` 恒为 false）。
 - 任务状态在进程内；重启丢任务，报告文件保留；前端用 localStorage 的 job_id 恢复，404 时提示“任务已失效”。
 - 报告落盘：`reports/imaging-plan/revisit/<run_id>/{plan.json,report.html,meta.json}`；旧 task1~task5 目录保留；根上 `latest` 软链指向最近一份。
 - 报告首屏 KPI：最少卫星数 / 达标面积（最长重访 ≤ T · 目标 100%）/ 全目录上限 / 评估窗口；不再展示时间覆盖率与面积加权 MRT 作为主 KPI；不可行时标题写“未达标，全目录上限 X%”，并给出放宽分辨率的实测建议。
@@ -108,4 +108,4 @@ DSH 侧工具名带前缀：`mcp__rs-service__<tool>`。
 
 - 卫星不存在：`{"ok": false, "error": "not_found", "sat_id": ...}`。
 - 同步失败：`sync_status.last_run.status` 为 `retrying` / `abandoned`，并带 `error_code`。
-- TLE 过期：`age_hours > 72` 时由上层标记 `degraded`；`> 168` 拒绝用于过境计算。
+- TLE 年龄只作信息展示，不阻塞求解；过期数据仍由同步任务更新。

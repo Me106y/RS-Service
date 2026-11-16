@@ -40,7 +40,7 @@ TASKS: tuple[dict[str, Any], ...] = (
         "label": "区域重访",
         "required": ["revisit_hours"],
         "advanced": [],
-        "description": "给定区域与重访时间 T（48/72h），求最少卫星；窗口自动取 min(3T, 168h)，面积目标固定 100%。",
+        "description": "给定区域与重访时间 T（48–168h，默认 48），求最少卫星；窗口自动取 min(3T, 336h)，面积目标固定 100%。",
     },
 )
 
@@ -63,7 +63,7 @@ class PlanCreate(BaseModel):
     aoi_code: str | None = None
     aoi_wkt: str | None = None
     start_utc: datetime | None = None
-    revisit_hours: Literal[48, 72] = 48
+    revisit_hours: int = Field(default=48, ge=48, le=168)
     sensor_types: list[Literal["optical"]] = Field(default=DEFAULT_SENSOR_TYPES, min_length=1)
     max_resolution_m: float = Field(default=10.0, gt=0, le=10.0)
     cloud_filter: bool = False
@@ -83,7 +83,7 @@ class PlanCreate(BaseModel):
         start = self.start_utc or datetime.now(UTC)
         if start.tzinfo is None:
             start = start.replace(tzinfo=UTC)
-        horizon = min(3.0 * float(self.revisit_hours), 168.0)
+        horizon = min(3.0 * float(self.revisit_hours), 336.0)
         return PlanSpec(
             operation="revisit",
             aoi_code=self.aoi_code,
@@ -279,17 +279,19 @@ def plan_options() -> dict[str, Any]:
         "latest_epoch_utc": latest_epoch,
         "oldest_epoch_utc": oldest_epoch,
         "max_age_hours": round(age, 1) if age is not None else None,
-        "degraded": age is not None and age > 72.0,
-        "stale": age is not None and age > 168.0 and not candidates,
+        "degraded": False,
+        "stale": False,
     }
     return {
         "ok": True,
         "tasks": list(TASKS),
         "advanced": list(ADVANCED_FIELDS),
         "revisit": {
-            "hours": [48, 72],
+            "min_hours": 48,
+            "max_hours": 168,
             "default_hours": 48,
-            "window_rule": "min(3T, 168)",
+            "window_cap_hours": 336,
+            "window_rule": "min(3T, 336)",
             "area_target_pct": 100,
             "cloud_filter_default": False,
         },

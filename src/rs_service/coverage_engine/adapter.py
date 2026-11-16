@@ -212,16 +212,6 @@ def collect_candidates(
         if age_hours is None:
             blocked.append(_blocked(sat.sat_id, sat.name, sensor_type, "缺少 TLE 时间"))
             continue
-        if age_hours > 168.0:
-            blocked.append(
-                _blocked(
-                    sat.sat_id,
-                    sat.name,
-                    sensor_type,
-                    f"TLE 年龄 {age_hours:.1f} 小时（>7 天），请先同步",
-                )
-            )
-            continue
         candidates.append(
             Candidate(
                 norad_id=int(sat.sat_id),
@@ -920,12 +910,6 @@ def _run_once(
             session, spec.sensor_types, spec.max_resolution_m
         )
         if not candidates:
-            if blocked and all("TLE" in item.get("reason", "") for item in blocked):
-                raise PlanError(
-                    "tle_stale",
-                    "TLE 已超过 7 天，请先运行 `rs-service sync` 再规划",
-                    blocked_satellites=blocked,
-                )
             raise PlanError(
                 "no_candidates",
                 "当前传感器类型与分辨率筛选下没有可用候选卫星",
@@ -937,7 +921,7 @@ def _run_once(
             "latest_epoch_utc": max(item.tle_epoch_utc for item in candidates),
             "max_age_hours": round(max_age, 1),
             "min_age_hours": round(min(ages), 1) if ages else None,
-            "degraded": max_age > 72.0,
+            "degraded": False,
             "stale": False,
         }
         root = _write_workspace(candidates, aoi, adcode)
@@ -1021,16 +1005,18 @@ def run_plan(
         capped = bool(
             spec.operation == "revisit"
             and revisit_hours
-            and 3.0 * revisit_hours > 168.0
+            and 3.0 * revisit_hours > 336.0
         )
         result["window"] = {
             "requested_horizon_h": spec.horizon_h,
             "used_horizon_h": horizon,
             "expanded": expanded,
             "attempts": attempt,
-            "window_rule": "3T" if spec.operation == "revisit" else None,
+            "window_rule": "min(3T, 336)" if spec.operation == "revisit" else None,
             "revisit_hours": revisit_hours,
-            "capped_by_tle": capped,
+            "cap_hours": 336.0,
+            "capped_by_horizon": capped,
+            "capped_by_tle": False,
         }
         result["auto_expand"] = {
             "requested": bool(spec.auto_expand),
