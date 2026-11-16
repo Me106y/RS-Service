@@ -368,7 +368,7 @@ footer{margin-top:64px;padding-top:20px;border-top:1px solid var(--line);color:v
     <table><thead><tr><th class="num">访问</th><th>时间</th><th>卫星</th><th class="num">对目标区域覆盖率</th><th class="num">累计成像</th></tr></thead><tbody>
     {% for a in accesses %}<tr><td class="num">#{{ a.index }}</td><td class="mono">{{ a.start_label }}–{{ a.end_label }}</td><td>{% for sat in a.satellites %}{{ sat.name }}{% if not loop.last %}、{% endif %}{% endfor %}</td><td class="num">{{ "%.1f"|format(a.coverage_pct) }}%</td><td class="num">{{ "%.1f"|format(a.duration_minutes) }} min</td></tr>{% endfor %}
     </tbody></table>
-    <p class="fine">对目标区域覆盖率 = 这次访问覆盖的网格数 ÷ 目标区域全部网格数；成功方案每次访问都应为 100%。</p>
+    <p class="fine">对目标区域覆盖率 = 这次访问覆盖的网格数 ÷ 目标区域全部网格数；成功方案每次访问都应为 100%，不足 100% 说明该次访问的并集仍缺网格。</p>
     {% else %}
     <table><thead><tr><th>卫星</th><th>开始</th><th>结束</th><th class="num">时长</th></tr></thead><tbody>
     {% for p in passes %}<tr><td>{{ p.satellite }}{% if p.segment_count > 1 %}<span class="seg">第 {{ p.segment_index }}/{{ p.segment_count }} 段</span>{% endif %}</td><td class="mono">{{ p.start_label }}</td><td class="mono">{{ p.end_label }}</td><td class="num">{{ "%.1f"|format(p.duration_minutes) }} min</td></tr>{% endfor %}
