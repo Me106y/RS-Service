@@ -318,7 +318,6 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
     <h2>覆盖与回放</h2>
     <p class="lede">每个点是一个裁剪网格单元；颜色表示覆盖该网格总时长最多的卫星。{% if access_count %}本窗口共 <b>{{ access_count }}</b> 次访问；下方每张图对应一次访问，标出该次用到的卫星。{% else %}拖动时间轴查看覆盖累积，点按播放按 {{ speed_label }} 推进。{% endif %}</p>
     <div class="mapwrap">
-      <canvas id="map" width="1280" height="720" role="img" aria-label="覆盖分布与回放"></canvas>
       {% if access_count %}
       <div class="access-head"><strong>共 {{ access_count }} 次访问</strong><span>每张图对应一次访问；颜色表示该次覆盖该网格的卫星。</span></div>
       <div class="access-grid">
@@ -341,6 +340,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
       </tbody></table>
       </details>
       {% else %}
+      <canvas id="map" width="1280" height="720" role="img" aria-label="覆盖分布与回放"></canvas>
       <div class="transport">
         <button class="play" id="play" aria-label="播放">
           <svg id="ico" viewBox="0 0 16 16"><path d="M4 2l10 6-10 6z"/></svg>
@@ -386,9 +386,10 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
 <script>
 (function(){
   var D = JSON.parse(document.getElementById('planData').textContent);
-  var cv = document.getElementById('map'), ctx = cv.getContext('2d');
+  var cv = document.getElementById('map');
+  var ctx = cv ? cv.getContext('2d') : null;
   var dpr = Math.min(2, window.devicePixelRatio || 1);
-  var W = cv.width, H = cv.height;
+  var W = cv ? cv.width : 0, H = cv ? cv.height : 0;
   var bb = D.bbox, ev = D.events;
   var pad = 46, cos = Math.cos((bb[1]+bb[3])/2*Math.PI/180);
   var dx = (bb[2]-bb[0])*cos, dy = bb[3]-bb[1];
@@ -413,6 +414,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
   }
 
   function draw(upto){
+    if (!ctx) return;
     ctx.setTransform(dpr,0,0,dpr,0,0);
     ctx.clearRect(0,0,W,H);
     ctx.save(); ctx.scale(1,1);
@@ -573,8 +575,10 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
   if (scrub) scrub.value = idx;
   applyTheme(document.documentElement.dataset.theme === 'light' ? 'light' : 'dark', false);
   // 入场：一次淡入，不重复动画
-  cv.style.opacity = 0; cv.style.transition = 'opacity .5s ease-out';
-  requestAnimationFrame(function(){ cv.style.opacity = 1; });
+  if (cv){
+    cv.style.opacity = 0; cv.style.transition = 'opacity .5s ease-out';
+    requestAnimationFrame(function(){ cv.style.opacity = 1; });
+  }
 })();
 </script>
 {% if purchase_run_id %}
