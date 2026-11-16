@@ -2,6 +2,18 @@
 
 RS-Service 的用户可见变化。版本规则见 [VERSIONING.md](https://github.com/Me106y/SIRIAgent/blob/main/docs/VERSIONING.md)。
 
+## [2.1.0] - 2026-11-16
+
+### Added
+
+- 目录从 65 颗扩到 **105 颗**（101 光学 + 4 高光谱）：补 37 颗国产光学（吉林一号 03–09 / GF-3A / Kuanfu 01B / Kuanfu 02B 2–6、天绘、资源、环境、高分 11/14），再加 3 颗 Sentinel-2（10m / 290km）。
+- `scripts/expand_catalog.py`：可重复执行的扩星脚本，按型号写入 `confidence` 与 `source_url`；`scripts/import_active_tle.py`：CelesTrak 403/不可达时从 active JSON 离线导入 TLE。
+
+### Changed
+
+- 杭州 72h / 24h / 100% 闸门由 **fail（9.662%）** 变为 **pass（100.0%）**：93 个候选、4 颗星（GF-1 / GF-1 02 / GF-1 03 / Sentinel-2C），耗时 116s。
+- `docs/api.md`、`README.md` 的目录与可规划数量同步为 105 / 93。
+
 ## [2.0.0] - 2026-11-16
 
 ### Changed
