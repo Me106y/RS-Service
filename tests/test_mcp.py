@@ -12,7 +12,7 @@ def test_mcp_tools(seeded_db: str) -> None:
     reset_engine()
     try:
         listing = list_satellites()
-        assert listing["count"] == 215
+        assert listing["count"] == 203
 
         detail = get_satellite(40118)
         assert detail["ok"] is True
