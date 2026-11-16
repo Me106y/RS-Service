@@ -314,10 +314,10 @@ footer{margin-top:64px;padding-top:20px;border-top:1px solid var(--line);color:v
 
   <section id="cover">
     <h2>访问覆盖</h2>
-    <p class="lede">每个点是一个裁剪网格单元；颜色表示这次访问覆盖该网格的卫星。{% if access_count %}本窗口共 <b>{{ access_count }}</b> 次访问；单次过境的峰值覆盖不是重访达标率，本方案由多次访问共同补齐全部网格。下方每张图对应一次访问。{% else %}拖动时间轴查看覆盖累积，点按播放按 {{ speed_label }} 推进。{% endif %}</p>
+    <p class="lede">每个点是一个裁剪网格单元；颜色表示这次访问覆盖该网格的卫星。{% if access_count %}本窗口共 <b>{{ access_count }}</b> 次访问；每次访问由若干卫星的过境共同拼成一次完整覆盖，下方每张图对应一次访问。{% else %}拖动时间轴查看覆盖累积，点按播放按 {{ speed_label }} 推进。{% endif %}</p>
     <div class="mapwrap">
       {% if access_count %}
-      <div class="access-head"><strong>共 {{ access_count }} 次访问</strong><span>每张图对应一次访问；颜色表示该次覆盖该网格的卫星。</span></div>
+      <div class="access-head"><strong>共 {{ access_count }} 次访问</strong><span>一次访问可由多颗卫星拼成；颜色表示该次覆盖该网格的卫星。</span></div>
       <div class="access-grid">
         {% for a in accesses %}
         <figure class="access-card">
@@ -363,12 +363,12 @@ footer{margin-top:64px;padding-top:20px;border-top:1px solid var(--line);color:v
 
   <section id="purchase">
     <h2>推荐计划</h2>
-    <p class="lede">求解状态 <b>{{ optimality }}</b>；可行性 <b>{{ "是" if feasible else "否" }}</b>。{% if access_count %}下表是窗口内的每次访问，以及对目标区域的覆盖率；整体达标看所有访问的并集。{% else %}下表是选中卫星在本窗口内的过境窗口。{% endif %}</p>
+    <p class="lede">求解状态 <b>{{ optimality }}</b>；可行性 <b>{{ "是" if feasible else "否" }}</b>。{% if access_count %}下表是窗口内的每次访问，以及对目标区域的覆盖率；一次访问可由多颗卫星拼成。{% else %}下表是选中卫星在本窗口内的过境窗口。{% endif %}</p>
     {% if access_count %}
-    <table><thead><tr><th class="num">访问</th><th>时间</th><th>卫星</th><th class="num">对目标区域覆盖率</th><th class="num">时长</th></tr></thead><tbody>
+    <table><thead><tr><th class="num">访问</th><th>时间</th><th>卫星</th><th class="num">对目标区域覆盖率</th><th class="num">累计成像</th></tr></thead><tbody>
     {% for a in accesses %}<tr><td class="num">#{{ a.index }}</td><td class="mono">{{ a.start_label }}–{{ a.end_label }}</td><td>{% for sat in a.satellites %}{{ sat.name }}{% if not loop.last %}、{% endif %}{% endfor %}</td><td class="num">{{ "%.1f"|format(a.coverage_pct) }}%</td><td class="num">{{ "%.1f"|format(a.duration_minutes) }} min</td></tr>{% endfor %}
     </tbody></table>
-    <p class="fine">对目标区域覆盖率 = 这次访问覆盖的网格数 ÷ 目标区域全部网格数；单次访问可能不是 100%，所有访问的并集才是首屏的面积数字。</p>
+    <p class="fine">对目标区域覆盖率 = 这次访问覆盖的网格数 ÷ 目标区域全部网格数；成功方案每次访问都应为 100%。</p>
     {% else %}
     <table><thead><tr><th>卫星</th><th>开始</th><th>结束</th><th class="num">时长</th></tr></thead><tbody>
     {% for p in passes %}<tr><td>{{ p.satellite }}{% if p.segment_count > 1 %}<span class="seg">第 {{ p.segment_index }}/{{ p.segment_count }} 段</span>{% endif %}</td><td class="mono">{{ p.start_label }}</td><td class="mono">{{ p.end_label }}</td><td class="num">{{ "%.1f"|format(p.duration_minutes) }} min</td></tr>{% endfor %}
