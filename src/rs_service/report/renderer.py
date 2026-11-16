@@ -170,7 +170,23 @@ def _notes(result: dict[str, Any]) -> list[str]:
             "面积加权 ART：按网格面积加权的平均重访间隔（相邻两次覆盖之间的平均空档）；"
             "task5 不设面积目标，报告不展示面积达标率。"
         )
-    elif operation in {"task2", "task_2_min_satellites_mrt", "revisit"}:
+    elif operation == "revisit":
+        minutes = _task2_mrt_target_min(result)
+        cards = result.get("summary_cards") or {}
+        achieved = float(cards.get("qualified_area_pct") or 0.0)
+        notes.append(
+            "达标面积：每个 5km 网格代表点的最长重访间隔（含夜间与窗口首尾空档）≤ "
+            f"{_duration_label(minutes)} 的面积占比；100% 指全部网格，不四舍五入。"
+        )
+        if achieved + 1e-9 < 100.0:
+            ceiling = cards.get("ceiling_area_pct")
+            ceiling_label = f"{float(ceiling):.1f}%" if ceiling is not None else "未知"
+            notes.append(
+                f"未达标：全部候选星一起算的全目录上限也只有 {ceiling_label}，不是选星算法偷懒。"
+                "光学只覆盖白天，单格最长间隔至少是夜间空档（约 12–19 h）；把分辨率放宽到"
+                " ≤1km 时，实测 1 颗 FY-3F（250m）即可在 72h/24h 做到 100%。"
+            )
+    elif operation in {"task2", "task_2_min_satellites_mrt"}:
         minutes = _task2_mrt_target_min(result)
         cards = result.get("summary_cards") or {}
         achieved = float(cards.get("qualified_area_pct") or 0.0)
@@ -418,6 +434,7 @@ def render_report(result: dict[str, Any], run_id: str | None = None) -> str:
         budget_value=budget_value,
         show_temporal=show_temporal,
         show_weak=show_weak,
+        is_revisit=is_revisit,
         weak_metric_mode=weak_metric_mode,
         feasible=bool(result.get("feasible")),
         optimality=result.get("optimality") or "—",
