@@ -2,6 +2,12 @@
 
 RS-Service 的用户可见变化。版本规则见 [VERSIONING.md](https://github.com/Me106y/SIRIAgent/blob/main/docs/VERSIONING.md)。
 
+## [2.3.0] - 2026-11-16
+
+### Added
+
+- `PlanCreate.window_hours`（可选，48–336）：用户可覆盖默认的 `3T` 评估窗口；`window.window_rule="user"`。默认仍为 `min(3T, 336h)`。
+
 ## [2.2.1] - 2026-11-16
 
 ### Fixed

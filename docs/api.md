@@ -48,7 +48,7 @@ v2.0.0 只有一个场景 `revisit`：给定区域 + 重访时间 T，求最少�
 | GET | `/plans/{job_id}/report` | 报告 HTML 本体（按 `run_id` 扫任务子目录） |
 | GET | `/plans/history` | 历史报告扁平列表（只读 `meta.json`）；新 run `task="revisit"`，旧 run 保留 `task1..task5` |
 
-- 口径：`W = min(3T, 336h)`；T 为整数，范围 48–168，默认 48；面积目标固定 100，`allow_area_fallback=false`；`auto_expand=false`。T>112h 时 W 达到 336h 上限（14 天），结果 `window.capped_by_horizon=true` 并标注。
+- 口径：默认 `W = min(3T, 336h)`；T 为整数，范围 48–168，默认 48。可选 `window_hours`（48–336）覆盖默认窗口，此时 `window.window_rule="user"`。面积目标固定 100，`allow_area_fallback=false`；`auto_expand=false`。未指定 `window_hours` 且 T>112h 时 W 达到 336h 上限（14 天），结果 `window.capped_by_horizon=true` 并标注。
 - 判定：每个 5 km 网格代表点的最长重访间隔（**含夜间与窗口首尾空档**）≤ T；全部网格达标才算可行。`summary_cards.qualified_area_pct` 是达标面积；`summary_cards.ceiling_area_pct` 是全部候选星一起算的“全目录上限”，不可行时用来区分“目录不够”与“算法没找到”。
 - 结果字段：`targets.revisit_hours`、`targets.area_pct=100`、`targets.temporal_coverage_pct=null`；`window.window_rule="3T"`、`window.used_horizon_h`、`window.capped_by_tle`；`optimality ∈ proven_optimal|time_limited|infeasible_heuristic`；`suggestion` 仅在不可行且 ≤10m 时给出“放宽到 ≤1km 可 100%”的结构化建议（不自动切换）。
 - 进度：`GET /plans/{job_id}` 的 `progress={stage,label,current,total,pct,elapsed_s,updated_at}`；阶段 `prepare/grid/opportunities/cloud/selection/metrics/playback/done`。机会阶段 `current/total` 是已传播卫星数；选星阶段 1/2、2/2。前端 1.2s 轮询，不提供 ETA。
