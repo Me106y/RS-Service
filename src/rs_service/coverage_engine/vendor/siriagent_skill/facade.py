@@ -331,6 +331,7 @@ def run_selection_task(
                 min_simultaneous=request.min_simultaneous,
                 method=request.method,
                 time_limit_s=request.selection_time_limit_s,
+                greedy_time_limit_s=request.greedy_time_limit_s,
             )
 
         return _area_constrained_outcome(request, store, run_once)
@@ -455,20 +456,27 @@ def _request_summary(
     return summary
 
 
+
 def execute_request(
     request: SkillRequest,
     *,
     root: str | Path | None = None,
     window_filter: Callable[[Any], Any] | None = None,
+    progress: Callable[[str, str, int | None, int | None], None] | None = None,
 ) -> dict[str, Any]:
     """完成一次同机 Skill 请求；选星模式内部只传播一次轨道。
 
     ``window_filter`` 是 RS-Service 的云量钩子：在机会窗口算完、选星之前
     接收 OpportunityStore，返回过滤后的 store。默认 None，保持参考实现行为。
+
+    ``progress`` 是 RS-Service 的进度钩子，签名为
+    ``(stage, label, current, total)``；阶段名与 plan_api 的 progress 契约一致。
     """
 
     project_root = Path(root).resolve() if root else PROJECT_ROOT
     total_start = time.perf_counter()
+    if progress is not None:
+        progress("prepare", "读取卫星与 TLE", None, None)
     satellites, timescale, tle_path, tle_hash, catalog_context = _load_satellites(
         request, project_root
     )
@@ -480,6 +488,8 @@ def execute_request(
         )
 
     grid_start = time.perf_counter()
+    if progress is not None:
+        progress("grid", "生成网格", None, None)
     boundary = load_city_boundary(boundary_path, adcode=request.city_adcode)
     grid = build_clipped_grid(boundary, grid_size_m=request.grid_size_km * 1_000.0)
     grid_seconds = time.perf_counter() - grid_start
@@ -519,6 +529,8 @@ def execute_request(
     store = _cached_opportunities(cache_key)
     opportunity_cache_hit = store is not None
     if store is None:
+        if progress is not None:
+            progress("opportunities", "传播与过境机会", 0, len(satellites))
         store = regional_opportunities.compute_regional_opportunities(
             satellites,
             grid,
@@ -528,11 +540,27 @@ def execute_request(
             decision_step_s=request.decision_step_s,
             cell_chunk_size=256,
             timescale=timescale,
+            progress=(
+                None
+                if progress is None
+                else lambda fraction, label: progress(
+                    "opportunities",
+                    label,
+                    int(round(float(fraction) * len(satellites))),
+                    len(satellites),
+                )
+            ),
         )
         _store_cached_opportunities(cache_key, store)
+    if progress is not None:
+        progress("opportunities", "传播与过境机会", len(satellites), len(satellites))
     opportunity_seconds = time.perf_counter() - opportunity_start
     if window_filter is not None:
+        if progress is not None:
+            progress("cloud", "云量过滤", None, None)
         store = window_filter(store)
+        if progress is not None:
+            progress("cloud", "云量过滤", None, None)
 
     selection_seconds = 0.0
     if request.operation == "coverage_only":
@@ -551,8 +579,12 @@ def execute_request(
         metrics_scope = "all_candidates"
     else:
         selection_start = time.perf_counter()
+        if progress is not None:
+            progress("selection", "选星（贪心 + ILP）", 1, 2)
         outcome = run_selection_task(request, store)
         selection_seconds = time.perf_counter() - selection_start
+        if progress is not None:
+            progress("selection", "选星（贪心 + ILP）", 2, 2)
         metrics_seconds = 0.0  # 选星入口已经用同一份窗口完成复核。
         selected_indices = outcome.selected_sat_indices
         metrics = outcome.metrics
@@ -562,6 +594,8 @@ def execute_request(
         used_area_target_pct = outcome.used_area_target_pct
         metrics_scope = "selected_satellites"
 
+    if progress is not None:
+        progress("metrics", "指标与回放", None, None)
     satellite_table, pass_table = build_human_tables(
         store,
         selected_indices,

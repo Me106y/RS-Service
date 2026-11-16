@@ -22,12 +22,14 @@ import os
 import re
 import shutil
 import tempfile
-from collections.abc import Iterable
+from collections import Counter
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from pyproj import Geod
 from shapely import wkt as shapely_wkt
 from shapely.geometry import mapping, shape
 from siriagent_skill.facade import execute_request  # noqa: E402
@@ -57,6 +59,21 @@ _UI_SENSOR_TO_CLASS = {
     "sar": "SAR",
 }
 _RESOLUTION_RE = re.compile(r"(\d+(?:\.\d+)?)\s*m\b")
+_MAX_AOI_KM2 = 20_000.0
+_GEOD = Geod(ellps="WGS84")
+
+
+def _geometry_area_km2(geometry: Any) -> float:
+    """WGS84 椭球面积；MultiPolygon 按各面累加。"""
+
+    geoms = getattr(geometry, "geoms", None)
+    if geoms is not None:
+        return sum(_geometry_area_km2(item) for item in geoms)
+    try:
+        area, _perimeter = _GEOD.geometry_area_perimeter(geometry)
+    except Exception:  # noqa: BLE001 - 退化几何或非多边形时按 0 处理
+        return 0.0
+    return abs(float(area)) / 1_000_000.0
 
 
 class PlanError(ValueError):
@@ -85,6 +102,7 @@ class PlanSpec:
     min_simultaneous: int = 1
     method: str | None = None
     selection_time_limit_s: int = 30
+    greedy_time_limit_s: int = 60
     temporal_coverage_target_pct: float | None = None
     mrt_target_minutes: float | None = None
     n_budget: int | None = None
@@ -110,6 +128,7 @@ class Candidate:
     omm: dict[str, Any]
     tle_epoch_utc: str
     tle_age_hours: float
+    confidence: str = "unknown"
 
 
 def tle_age_hours(epoch_utc: str | None, now: datetime | None = None) -> float | None:
@@ -213,6 +232,7 @@ def collect_candidates(
                 omm=json.loads(tle.omm_json),
                 tle_epoch_utc=tle.epoch_utc,
                 tle_age_hours=age_hours,
+                confidence=(sensor.confidence or "unknown"),
             )
         )
     return candidates, blocked
@@ -235,6 +255,12 @@ def _resolve_aoi(session: Session, spec: PlanSpec) -> tuple[str, str, dict[str, 
         province_shape = shape(mapping(shapely_wkt.loads(province.geom_wkt)))
         if not geometry.intersects(province_shape):
             raise PlanError("aoi_out_of_zhejiang", "本版本只支持浙江省内的范围")
+        area_km2 = _geometry_area_km2(geometry)
+        if area_km2 > _MAX_AOI_KM2:
+            raise PlanError(
+                "aoi_too_large",
+                f"自定义范围约 {area_km2:.0f} km²，超过 {_MAX_AOI_KM2:.0f} km² 上限",
+            )
         digest = hashlib.sha1(geometry.wkb).hexdigest()[:10]
         adcode = f"custom_{digest}"
         name = "自定义范围"
@@ -246,6 +272,11 @@ def _resolve_aoi(session: Session, spec: PlanSpec) -> tuple[str, str, dict[str, 
         )
         if row is None or not row.geom_wkt:
             raise PlanError("aoi_not_found", f"未知 AOI：{spec.aoi_code}")
+        if str(row.level or "") == "province":
+            raise PlanError(
+                "aoi_too_large",
+                "本版只支持市级/区县级范围；省级 AOI 请等数据扩容后再开放",
+            )
         geometry = shapely_wkt.loads(row.geom_wkt)
         adcode = str(row.adcode or row.code)
         name = row.name
@@ -326,7 +357,9 @@ def _payload(
 
     start = spec.start_utc.astimezone(UTC).replace(microsecond=0)
     payload: dict[str, Any] = {
-        "operation": spec.operation,
+        "operation": (
+            "task_2_min_satellites_mrt" if spec.operation == "revisit" else spec.operation
+        ),
         "city_adcode": adcode,
         "start_utc": start.isoformat().replace("+00:00", "Z"),
         "analysis_horizon_h": spec.horizon_h,
@@ -342,6 +375,7 @@ def _payload(
         "decision_step_s": spec.decision_step_s,
         "min_simultaneous": spec.min_simultaneous,
         "selection_time_limit_s": spec.selection_time_limit_s,
+        "greedy_time_limit_s": spec.greedy_time_limit_s,
         "allow_area_fallback": spec.allow_area_fallback,
         "mrt_area_quantile_pct": spec.mrt_area_quantile_pct,
         "max_windows": spec.max_windows,
@@ -671,6 +705,19 @@ def _annotate_result(
         ),
         "mrt_minutes": recommended.get("mrt_target_minutes"),
     }
+    mrt_seconds = recommended.get("mrt_target_s")
+    if mrt_seconds is not None:
+        result["targets"]["revisit_hours"] = round(float(mrt_seconds) / 3600.0, 2)
+        result["targets"]["mrt_minutes"] = round(float(mrt_seconds) / 60.0, 2)
+    elif recommended.get("mrt_target_minutes") is not None:
+        result["targets"]["revisit_hours"] = round(
+            float(recommended["mrt_target_minutes"]) / 60.0, 2
+        )
+    result["catalog"] = {
+        "candidate_count": len(candidates),
+        "confidence": dict(Counter(item.confidence for item in candidates)),
+        "official_count": sum(1 for item in candidates if item.confidence == "official"),
+    }
     if operation in {"task3", "task_3_max_qualified_area"}:
         cards = result.setdefault("summary_cards", {})
         cards["covered_area_pct"] = cards.get("qualified_area_pct")
@@ -731,7 +778,47 @@ def _annotate_result(
     return result
 
 
-def _run_once(spec: PlanSpec) -> dict[str, Any]:
+def _attach_ceiling_and_suggestion(
+    result: dict[str, Any],
+    spec: PlanSpec,
+    store: Any,
+) -> None:
+    """补“全目录上限”和不可行时的放宽建议。
+
+    ``_evaluate`` 是 vendor 的内部复核函数；用它把全部候选星一次性算完，
+    比重新跑一遍选星便宜得多，也能回答“是目录不够还是算法没找到”。
+    """
+
+    cards = result.setdefault("summary_cards", {})
+    if spec.mrt_target_minutes is not None:
+        try:
+            import regional_selection  # noqa: PLC0415 - vendor 模块，按需导入
+            ceiling_metrics = regional_selection._evaluate(  # noqa: SLF001 - 同仓 vendor 复核
+                store,
+                range(store.n_satellites),
+                float(spec.mrt_target_minutes) * 60.0,
+                spec.min_simultaneous,
+            )
+            cards["ceiling_area_pct"] = round(
+                float(ceiling_metrics.city.qualified_area_pct or 0.0), 4
+            )
+        except Exception:  # noqa: BLE001 - 上限只是辅助指标，不能拖垮主结果
+            cards.setdefault("ceiling_area_pct", None)
+    if not result.get("feasible") and spec.max_resolution_m <= 10.0:
+        result["suggestion"] = {
+            "kind": "relax_resolution",
+            "max_resolution_m": 1000,
+            "estimated_sats": 1,
+            "source": "FY-3F",
+            "basis": "2026-11-16 杭州 72h / T=24h / 100% 实测：1 颗 FY-3F，221s",
+            "note": "放宽到 ≤1km 会引入 250m 气象星；这只是可达性建议，不会自动切换。",
+        }
+
+
+def _run_once(
+    spec: PlanSpec,
+    progress: Callable[[str, str, int | None, int | None], None] | None = None,
+) -> dict[str, Any]:
     """按单一窗口执行一次规划。"""
 
     cloud_stats: dict[str, Any] = {"filtered": False, "reason": "未启用"}
@@ -776,10 +863,25 @@ def _run_once(spec: PlanSpec) -> dict[str, Any]:
                 captured["store"] = store
                 return store
 
-            result = execute_request(request, root=root, window_filter=_capture)
+            result = execute_request(
+                request,
+                root=root,
+                window_filter=_capture,
+                progress=(
+                    progress
+                    if spec.cloud_filter or progress is None
+                    else lambda stage, label, current, total: (
+                        None if stage == "cloud" else progress(stage, label, current, total)
+                    )
+                ),
+            )
         finally:
             shutil.rmtree(root, ignore_errors=True)
     _annotate_result(result, candidates, blocked, cloud_stats, tle_info)
+    if spec.operation == "revisit" and captured.get("store") is not None:
+        _attach_ceiling_and_suggestion(result, spec, captured["store"])
+    if progress is not None:
+        progress("playback", "回放与报告数据", None, None)
     if captured.get("store") is not None:
         _attach_report_data(result, candidates, aoi, captured["store"])
     return result
@@ -801,7 +903,10 @@ def _horizons(spec: PlanSpec) -> list[float]:
     return horizons
 
 
-def run_plan(spec: PlanSpec) -> dict[str, Any]:
+def run_plan(
+    spec: PlanSpec,
+    progress: Callable[[str, str, int | None, int | None], None] | None = None,
+) -> dict[str, Any]:
     """执行规划；task1 可自动扩窗到 168h，返回实际使用的窗口。"""
 
     horizons = _horizons(spec)
@@ -812,13 +917,28 @@ def run_plan(spec: PlanSpec) -> dict[str, Any]:
             if abs(horizon - spec.horizon_h) < 1e-9
             else replace(spec, horizon_h=horizon)
         )
-        result = _run_once(current)
+        result = _run_once(current, progress=progress)
+        if spec.operation == "revisit":
+            result["operation"] = "revisit"
         expanded = abs(horizon - spec.horizon_h) > 1e-9
+        revisit_hours = (
+            float(spec.mrt_target_minutes) / 60.0
+            if spec.operation == "revisit" and spec.mrt_target_minutes
+            else None
+        )
+        capped = bool(
+            spec.operation == "revisit"
+            and revisit_hours
+            and 3.0 * revisit_hours > 168.0
+        )
         result["window"] = {
             "requested_horizon_h": spec.horizon_h,
             "used_horizon_h": horizon,
             "expanded": expanded,
             "attempts": attempt,
+            "window_rule": "3T" if spec.operation == "revisit" else None,
+            "revisit_hours": revisit_hours,
+            "capped_by_tle": capped,
         }
         result["auto_expand"] = {
             "requested": bool(spec.auto_expand),

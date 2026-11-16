@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import copy
 import threading
 import uuid
 from collections import Counter
@@ -34,57 +35,21 @@ router = APIRouter(prefix="/api/v1", tags=["plans"])
 
 TASKS: tuple[dict[str, Any], ...] = (
     {
-        "operation": "task1",
-        "supports_auto_expand": True,
-        "label": "最少星达到覆盖率",
-        "required": [],
-        "advanced": ["area_target_pct", "fallback_area_target_pct"],
-        "description": "给定面积覆盖目标（默认 90%），求最少需要几颗星；按“至少成像一次”判定。",
-    },
-    {
-        "operation": "task2",
+        "operation": "revisit",
         "supports_auto_expand": False,
-        "label": "最少星达到重访",
-        "required": ["mrt_target_minutes"],
+        "label": "区域重访",
+        "required": ["revisit_hours"],
         "advanced": [],
-        "description": "给定 P95 重访上限，求最少需要几颗星。",
-    },
-    {
-        "operation": "task3",
-        "supports_auto_expand": False,
-        "label": "给定星数最大化覆盖面积",
-        "required": ["n_budget"],
-        "advanced": ["exact_budget"],
-        "description": "星数固定，在时间窗内求至少覆盖一次的面积最大；不设时间覆盖率门槛。",
-    },
-    {
-        "operation": "task4",
-        "supports_auto_expand": False,
-        "label": "给定星数最小化面积分位 MRT",
-        "required": ["n_budget"],
-        "advanced": ["area_target_pct", "mrt_area_quantile_pct", "exact_budget"],
-        "description": "星数固定，求面积加权的分位 MRT 最小。",
-    },
-    {
-        "operation": "task5",
-        "supports_auto_expand": False,
-        "label": "给定星数最小化 ART",
-        "required": ["n_budget"],
-        "advanced": [],
-        "description": "星数固定，求面积加权平均重访时间最小（greedy）。",
+        "description": "给定区域与重访时间 T，求最少卫星；窗口自动取 min(3T, 168h)，面积目标固定 100%。",
     },
 )
 
 ADVANCED_FIELDS: tuple[dict[str, Any], ...] = (
-    {"name": "area_target_pct", "label": "面积目标 %", "type": "number", "default": None},
-    {"name": "fallback_area_target_pct", "label": "面积回退 %", "type": "number", "default": 90},
-    {"name": "exact_budget", "label": "精确星数预算", "type": "boolean", "default": None},
     {"name": "grid_size_km", "label": "网格大小 km", "type": "number", "default": 5},
     {"name": "detection_step_s", "label": "检测步长 s", "type": "number", "default": 10},
-    {"name": "selection_time_limit_s", "label": "选星时限 s", "type": "number", "default": 30},
 )
 
-DEFAULT_SENSOR_TYPES = ["optical", "hyperspectral", "sar"]
+DEFAULT_SENSOR_TYPES = ["optical"]
 
 _REQUIRED: dict[str, tuple[str, ...]] = {
     item["operation"]: tuple(item["required"]) for item in TASKS
@@ -92,94 +57,90 @@ _REQUIRED: dict[str, tuple[str, ...]] = {
 
 
 class PlanCreate(BaseModel):
-    """前端提交的完整规划参数；字段与 5 个任务共用。"""
+    """v2.0.0 唯一场景：区域重访。窗口、面积目标、指向都由服务端固定。"""
 
-    operation: Literal[
-        "task1", "task2", "task3", "task4", "task5"
-    ]
+    operation: Literal["revisit"]
     aoi_code: str | None = None
     aoi_wkt: str | None = None
     start_utc: datetime | None = None
-    horizon_h: float = Field(default=72.0, gt=0, le=168.0)
-    auto_expand: bool = False
-    sensor_types: list[Literal["optical", "hyperspectral", "sar"]] = Field(
-        default=DEFAULT_SENSOR_TYPES, min_length=1
-    )
-    max_resolution_m: float = Field(default=10.0, gt=0, le=10_000.0)
-    # 只保留星下点：目标指向等于让每颗星都盯着 AOI 形心，没有星座做得到。
-    pointing: Literal["nadir"] = "nadir"
-    grid_size_km: float = Field(default=5.0, gt=0, le=50.0)
-    detection_step_s: int = Field(default=10, ge=1, le=3600)
-    selection_time_limit_s: int = Field(default=30, ge=1, le=3600)
-    temporal_coverage_target_pct: float | None = Field(default=None, gt=0, le=100)
-    mrt_target_minutes: float | None = Field(default=None, ge=0)
-    n_budget: int | None = Field(default=None, ge=1, le=500)
-    area_target_pct: float | None = Field(default=None, gt=0, le=100)
-    fallback_area_target_pct: float | None = Field(default=None, gt=0, le=100)
-    allow_area_fallback: bool = True
-    exact_budget: bool | None = None
+    revisit_hours: Literal[24, 48, 72] = 24
+    sensor_types: list[Literal["optical"]] = Field(default=DEFAULT_SENSOR_TYPES, min_length=1)
+    max_resolution_m: float = Field(default=10.0, gt=0, le=10.0)
+    cloud_filter: bool = False
+    cloud_threshold_pct: float = Field(default=70.0, gt=0, le=100)
     max_windows: int = Field(default=10, ge=1, le=100)
     max_weak_areas: int = Field(default=10, ge=1, le=100)
-    cloud_filter: bool = True
-    cloud_threshold_pct: float = Field(default=70.0, gt=0, le=100)
 
     @model_validator(mode="after")
     def _check(self) -> PlanCreate:
         if bool(self.aoi_code) == bool(self.aoi_wkt):
             raise ValueError("aoi_code 与 aoi_wkt 必须二选一")
-        missing = [name for name in _REQUIRED[self.operation] if getattr(self, name) is None]
-        if missing:
-            raise ValueError(f"缺少任务必填字段：{', '.join(missing)}")
-        if self.auto_expand and self.operation != "task1":
-            raise ValueError("只有 task1 支持自动扩窗")
+        if self.sensor_types != ["optical"]:
+            raise ValueError("revisit 目前只支持光学载荷")
         return self
 
     def to_spec(self) -> PlanSpec:
         start = self.start_utc or datetime.now(UTC)
         if start.tzinfo is None:
             start = start.replace(tzinfo=UTC)
-        area_target = self.area_target_pct
-        if area_target is None:
-            area_target = 90.0
-        exact_budget = self.exact_budget
-        if self.operation == "task4" and exact_budget is None:
-            # 任务④对外是“给定星数”，默认补满到 N；显式 exact_budget=False 才按最多 N。
-            exact_budget = True
-        fallback_area_target = self.fallback_area_target_pct
-        if fallback_area_target is None:
-            # 旧引擎默认 fallback=90；严格目标低于 90 时会把 fallback 顶到严格目标之上。
-            fallback_area_target = min(90.0, float(area_target))
+        horizon = min(3.0 * float(self.revisit_hours), 168.0)
         return PlanSpec(
-            operation=self.operation,
+            operation="revisit",
             aoi_code=self.aoi_code,
             aoi_wkt=self.aoi_wkt,
             start_utc=start,
-            horizon_h=self.horizon_h,
-            auto_expand=self.auto_expand,
+            horizon_h=horizon,
+            auto_expand=False,
             sensor_types=tuple(self.sensor_types),
             max_resolution_m=self.max_resolution_m,
-            pointing=self.pointing,
-            grid_size_km=self.grid_size_km,
-            detection_step_s=self.detection_step_s,
-            selection_time_limit_s=self.selection_time_limit_s,
-            # task1/task3 都按面积口径：至少成像一次即覆盖。旧客户端给 task3 传的
-            # 单格时间覆盖率阈值在 72 h 内通常不可达，会把覆盖面积压成 0%，这里统一忽略。
-            temporal_coverage_target_pct=(
-                0.001
-                if self.operation in {"task1", "task3"}
-                else self.temporal_coverage_target_pct
-            ),
-            mrt_target_minutes=self.mrt_target_minutes,
-            n_budget=self.n_budget,
-            area_target_pct=area_target,
-            fallback_area_target_pct=fallback_area_target,
-            allow_area_fallback=self.allow_area_fallback,
-            exact_budget=exact_budget,
+            pointing="nadir",
+            grid_size_km=5.0,
+            detection_step_s=10,
+            decision_step_s=60,
+            selection_time_limit_s=30,
+            greedy_time_limit_s=60,
+            temporal_coverage_target_pct=None,
+            mrt_target_minutes=float(self.revisit_hours) * 60.0,
+            n_budget=None,
+            area_target_pct=100.0,
+            fallback_area_target_pct=100.0,
+            allow_area_fallback=False,
+            exact_budget=None,
             max_windows=self.max_windows,
             max_weak_areas=self.max_weak_areas,
             cloud_filter=self.cloud_filter,
             cloud_threshold_pct=self.cloud_threshold_pct,
         )
+
+
+_STAGE_BASE = {
+    "prepare": 0.0,
+    "grid": 1.0,
+    "opportunities": 2.0,
+    "cloud": 67.0,
+    "selection": 72.0,
+    "metrics": 97.0,
+    "playback": 99.0,
+    "done": 100.0,
+}
+_STAGE_WIDTH = {"opportunities": 65.0, "selection": 25.0}
+
+
+def _progress_pct(stage: str, current: int | None, total: int | None) -> float:
+    """把阶段内的 current/total 折算成 0–100 的总进度。"""
+
+    if stage == "done":
+        return 100.0
+    if stage == "failed":
+        return 0.0
+    base = _STAGE_BASE.get(stage, 0.0)
+    width = _STAGE_WIDTH.get(stage)
+    if width is not None and total:
+        fraction = max(0.0, min(1.0, float(current or 0) / float(total)))
+        return min(99.0, base + width * fraction)
+    if stage == "cloud":
+        return 67.0 if current is None else 72.0
+    return base
 
 
 class JobStore:
@@ -197,6 +158,15 @@ class JobStore:
             "job_id": job_id,
             "status": "queued",
             "created_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "progress": {
+                "stage": "queued",
+                "label": "排队中",
+                "current": None,
+                "total": None,
+                "pct": 0.0,
+                "elapsed_s": 0.0,
+                "updated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            },
             "result": None,
             "error": None,
         }
@@ -204,12 +174,12 @@ class JobStore:
             self._jobs[job_id] = job
             self._trim()
         self._executor.submit(self._run, job_id, spec)
-        return job
+        return copy.deepcopy(job)
 
     def get(self, job_id: str) -> dict[str, Any] | None:
         with self._lock:
             job = self._jobs.get(job_id)
-            return dict(job) if job else None
+            return copy.deepcopy(job) if job else None
 
     def _trim(self) -> None:
         if len(self._jobs) <= self._max_jobs:
@@ -217,23 +187,68 @@ class JobStore:
         for key in list(self._jobs)[: len(self._jobs) - self._max_jobs]:
             self._jobs.pop(key, None)
 
+    def _set_progress(
+        self,
+        job_id: str,
+        stage: str,
+        label: str,
+        current: int | None,
+        total: int | None,
+    ) -> None:
+        now = datetime.now(UTC)
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return
+            created = datetime.fromisoformat(job["created_at"].replace("Z", "+00:00"))
+            elapsed = max(0.0, (now - created).total_seconds())
+            previous = (job.get("progress") or {}).get("pct", 0.0)
+            pct = float(previous) if stage == "failed" else _progress_pct(stage, current, total)
+            job["progress"] = {
+                "stage": stage,
+                "label": label,
+                "current": current,
+                "total": total,
+                "pct": round(min(100.0, max(0.0, pct)), 1),
+                "elapsed_s": round(elapsed, 1),
+                "updated_at": now.isoformat().replace("+00:00", "Z"),
+            }
+
     def _run(self, job_id: str, spec: PlanSpec) -> None:
         with self._lock:
-            job = self._jobs[job_id]
+            job = self._jobs.get(job_id)
+            if job is None:
+                return
             job["status"] = "running"
+        self._set_progress(job_id, "prepare", "读取卫星与 TLE", None, None)
         try:
-            result = run_plan(spec)
+            result = run_plan(
+                spec,
+                progress=lambda stage, label, current, total: self._set_progress(
+                    job_id, stage, label, current, total
+                ),
+            )
             with self._lock:
+                job = self._jobs.get(job_id)
+                if job is None:
+                    return
                 job["status"] = "completed"
                 job["result"] = result
+            self._set_progress(job_id, "done", "完成", None, None)
         except PlanError as exc:
             with self._lock:
-                job["status"] = "failed"
-                job["error"] = {"code": exc.code, "message": exc.message, **exc.details}
+                job = self._jobs.get(job_id)
+                if job is not None:
+                    job["status"] = "failed"
+                    job["error"] = {"code": exc.code, "message": exc.message, **exc.details}
+            self._set_progress(job_id, "failed", "失败", None, None)
         except Exception as exc:  # noqa: BLE001 - 任务线程必须把失败写回任务
             with self._lock:
-                job["status"] = "failed"
-                job["error"] = {"code": "execution_error", "message": str(exc)}
+                job = self._jobs.get(job_id)
+                if job is not None:
+                    job["status"] = "failed"
+                    job["error"] = {"code": "execution_error", "message": str(exc)}
+            self._set_progress(job_id, "failed", "失败", None, None)
 
 
 JOBS = JobStore()
@@ -244,8 +259,10 @@ def plan_options() -> dict[str, Any]:
     """向导渲染所需的全部静态选项与当前数据能力。"""
 
     with session_scope() as session:
-        aois = session.scalars(select(Aoi).order_by(Aoi.level, Aoi.code)).all()
-        candidates, blocked = collect_candidates(session, tuple(DEFAULT_SENSOR_TYPES), 10_000)
+        aois = session.scalars(
+            select(Aoi).where(Aoi.level.in_(("city", "district"))).order_by(Aoi.level, Aoi.code)
+        ).all()
+        candidates, blocked = collect_candidates(session, tuple(DEFAULT_SENSOR_TYPES), 10.0)
         latest_epoch = session.scalar(
             select(func.max(TleRecord.epoch_utc)).join(
                 TleCurrent, TleCurrent.tle_id == TleRecord.id
@@ -269,30 +286,34 @@ def plan_options() -> dict[str, Any]:
         "ok": True,
         "tasks": list(TASKS),
         "advanced": list(ADVANCED_FIELDS),
+        "revisit": {
+            "hours": [24, 48, 72],
+            "default_hours": 24,
+            "window_rule": "min(3T, 168)",
+            "area_target_pct": 100,
+            "cloud_filter_default": False,
+        },
         "sensor_types": [
             {"value": "optical", "label": "光学"},
-            {"value": "hyperspectral", "label": "高光谱"},
-            {"value": "sar", "label": "SAR"},
         ],
         "defaults": {
-            "horizon_h": 72,
-            "auto_expand": False,
             "sensor_types": DEFAULT_SENSOR_TYPES,
             "max_resolution_m": 10,
-            "pointing": "nadir",
             "grid_size_km": 5,
             "detection_step_s": 10,
-            "selection_time_limit_s": 30,
-            "allow_area_fallback": True,
             "max_windows": 10,
             "max_weak_areas": 10,
-            "cloud_filter": True,
+            "cloud_filter": False,
             "cloud_threshold_pct": 70,
         },
         "aoi": [
             {"code": item.code, "name": item.name, "level": item.level, "adcode": item.adcode}
             for item in aois
         ],
+        "aoi_limits": {
+            "max_area_km2": 20_000,
+            "levels": ["city", "district", "custom"],
+        },
         "capability": {
             "plannable": len(candidates),
             "blocked": len(blocked),

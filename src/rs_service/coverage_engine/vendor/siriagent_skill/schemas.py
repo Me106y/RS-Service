@@ -427,6 +427,7 @@ class SkillRequest:
     debug: bool
     max_windows: int
     max_weak_areas: int
+    greedy_time_limit_s: int = 60
 
     @property
     def end_utc(self) -> datetime:
@@ -809,6 +810,9 @@ def normalize_request(payload: Mapping[str, Any]) -> SkillRequest:
     time_limit = _as_int(payload, "selection_time_limit_s", 30)
     if not 1 <= time_limit <= 3600:
         raise SkillInputError("selection_time_limit_s 必须在 1～3600 秒之间。")
+    greedy_time_limit = _as_int(payload, "greedy_time_limit_s", 60)
+    if not 1 <= greedy_time_limit <= 3600:
+        raise SkillInputError("greedy_time_limit_s 必须在 1～3600 秒之间。")
 
     temporal_target = None
     if payload.get("temporal_coverage_target_pct") not in (None, ""):
@@ -904,6 +908,7 @@ def normalize_request(payload: Mapping[str, Any]) -> SkillRequest:
         min_simultaneous=min_simultaneous,
         method=method,
         selection_time_limit_s=time_limit,
+        greedy_time_limit_s=greedy_time_limit,
         temporal_coverage_target_pct=temporal_target,
         mrt_target_minutes=mrt_minutes,
         area_target_pct=area_target,

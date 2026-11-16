@@ -22,6 +22,7 @@ TASK_LABELS = {
     "task3": "给定星数最大化覆盖面积",
     "task4": "给定星数最小化面积分位 MRT",
     "task5": "给定星数最小化 ART",
+    "revisit": "区域重访",
 }
 
 # 旧客户端与老报告用长 slug；目录、历史分组与报告标题都只认 task1..task5。
@@ -40,7 +41,7 @@ OPERATION_LABELS = {
 
 
 def task_key(operation: str | None) -> str:
-    """把长短两种 operation 归一成 task1..task5；认不出的归 other。"""
+    """把长短两种 operation 归一成任务键；v2 只有 revisit，旧报告仍是 task1..task5。"""
 
     value = str(operation or "")
     if value in TASK_LABELS:
@@ -169,7 +170,7 @@ def _notes(result: dict[str, Any]) -> list[str]:
             "面积加权 ART：按网格面积加权的平均重访间隔（相邻两次覆盖之间的平均空档）；"
             "task5 不设面积目标，报告不展示面积达标率。"
         )
-    elif operation in {"task2", "task_2_min_satellites_mrt"}:
+    elif operation in {"task2", "task_2_min_satellites_mrt", "revisit"}:
         minutes = _task2_mrt_target_min(result)
         cards = result.get("summary_cards") or {}
         achieved = float(cards.get("qualified_area_pct") or 0.0)
@@ -292,10 +293,13 @@ def render_report(result: dict[str, Any], run_id: str | None = None) -> str:
     is_task1 = operation in {"task1", "task_1_min_satellites_temporal"}
     is_task3 = operation in {"task3", "task_3_max_qualified_area"}
     is_task4 = operation in {"task4", "task_4_min_area_quantile_mrt"}
-    is_task2 = operation in {"task2", "task_2_min_satellites_mrt"}
+    is_task2 = operation in {"task2", "task_2_min_satellites_mrt", "revisit"}
     is_task5 = operation in {"task5", "task_5_min_area_weighted_art"}
-    # task3/task4 是各自口径，不再展示通用“时间覆盖率”。
-    show_temporal = not is_task1 and not is_task3 and not is_task4 and not is_task5
+    is_revisit = operation == "revisit"
+    # task3/task4 是各自口径，不再展示通用“时间覆盖率”；revisit 也不展示。
+    show_temporal = (
+        not is_task1 and not is_task3 and not is_task4 and not is_task5 and not is_revisit
+    )
     area_target = targets.get("area_pct")
     label = OPERATION_LABELS.get(result.get("operation", ""), result.get("operation", "成图规划"))
     count = int(cards.get("satellite_count") or len(sats))
@@ -330,8 +334,9 @@ def render_report(result: dict[str, Any], run_id: str | None = None) -> str:
     elif is_task2:
         # task2 的“达标”同时受面积目标与最长重访目标约束：只写目标面积会让人以为
         # 0.0% 是算法坏了，其实多半是重访目标低于物理下限（光学夜间无过境）。
+        area_word = "目标" if is_revisit else "面积"
         target_label = (
-            f"达标面积（最长重访 ≤ {_duration_label(task2_target_min)} · 面积 {area_target:g}%）"
+            f"达标面积（最长重访 ≤ {_duration_label(task2_target_min)} · {area_word} {area_target:g}%）"
             if task2_target_min is not None and area_target is not None
             else f"达标面积（最长重访 ≤ {_duration_label(task2_target_min)}）"
             if task2_target_min is not None
@@ -354,7 +359,7 @@ def render_report(result: dict[str, Any], run_id: str | None = None) -> str:
         budget_label = ""
         budget_value = ""
     area_met = area_target is not None and area_pct >= float(area_target) - 1e-9
-    show_weak = bool(weak) and not is_task1 and (is_task4 or not area_met)
+    show_weak = bool(weak) and not is_task1 and not is_revisit and (is_task4 or not area_met)
     weak_metric_mode = (
         "none" if is_task3 else "mrt" if is_task4 else "art" if is_task5 else "all"
     )
@@ -370,6 +375,11 @@ def render_report(result: dict[str, Any], run_id: str | None = None) -> str:
         headline = (
             f"{label}：选中 <em>{count}</em> 颗，面积加权 ART "
             f"<em>{float(cards.get('area_weighted_art_minutes') or 0.0) / 60.0:.1f} h</em>"
+        )
+    elif is_revisit and not result.get("feasible"):
+        headline = (
+            f"{label}：未达标，全目录上限 "
+            f"<em>{float(cards.get('ceiling_area_pct') or area_pct):.1f}%</em>"
         )
     else:
         headline = f"{label}：选中 <em>{count}</em> 颗，达标面积 <em>{area_pct:.1f}%</em>"
@@ -391,7 +401,16 @@ def render_report(result: dict[str, Any], run_id: str | None = None) -> str:
         window_start=_bj(start),
         window_end=_bj(end),
         window_hours=hours,
-        window_note=window_note,
+        window_note=window_note or (
+            "受 TLE 7 天上限限制（2.33T）"
+            if window.get("capped_by_tle")
+            else ""
+        ),
+        ceiling_value=(
+            round(float(cards.get("ceiling_area_pct")), 1)
+            if cards.get("ceiling_area_pct") is not None
+            else None
+        ),
         target_label=target_label,
         target_value=target_value,
         target_unit=target_unit,
@@ -474,6 +493,13 @@ def build_kpi(key: str, result: dict[str, Any]) -> dict[str, Any]:
             "label": f"{float(target):g}% 面积分位 MRT",
             "value": _round(hours),
             "unit": "h",
+        }
+    if key == "revisit":
+        return {
+            "key": "qualified_area_pct",
+            "label": "达标面积（≤T）",
+            "value": _round(cards.get("qualified_area_pct")),
+            "unit": "%",
         }
     if key == "task2":
         p95 = selection.get("p95_mrt_s")

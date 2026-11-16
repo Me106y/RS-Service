@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 import math
+import time
 from itertools import combinations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -612,12 +613,19 @@ def greedy_select_mrt(
     mrt_target_s: float,
     area_target_pct: float = 100.0,
     min_simultaneous: int = 1,
+    time_limit_s: float | None = None,
 ) -> SelectionResult:
-    """贪心选星，再做反向删除；返回可行性和窗口级复核结果。"""
+    """贪心选星，再做反向删除；返回可行性和窗口级复核结果。
+
+    ``time_limit_s`` 是墙钟上限：到点停止搜索并返回当前最好集合，状态标
+    ``time_limited``。168h / 180 星的候选池下，无限贪心会跑到分钟级，必须限时。
+    """
 
     area_target_pct, mrt_target_s = _validate_inputs(
         store, area_target_pct, mrt_target_s, min_simultaneous
     )
+    deadline = None if not time_limit_s else time.monotonic() + float(time_limit_s)
+    timed_out = False
     usable = sorted({sat_index for sat_index, _ in store.windows})
     selected: list[int] = []
     current = _evaluate(store, selected, mrt_target_s, min_simultaneous)
@@ -626,6 +634,9 @@ def greedy_select_mrt(
         best_metrics: RegionalMetricsResult | None = None
         best_score = _score(current)
         for sat_index in usable:
+            if deadline is not None and time.monotonic() > deadline:
+                timed_out = True
+                break
             if sat_index in selected:
                 continue
             trial = _evaluate(
@@ -636,6 +647,8 @@ def greedy_select_mrt(
                 best_index = sat_index
                 best_metrics = trial
                 best_score = score
+        if timed_out:
+            break
         if best_index is None or best_metrics is None:
             break
         selected.append(best_index)
@@ -644,9 +657,12 @@ def greedy_select_mrt(
     # 反向删除：只要删掉后仍达到面积目标，就永久删除该星。
     if (current.city.qualified_area_pct or 0.0) + 1e-9 >= area_target_pct:
         changed = True
-        while changed:
+        while changed and not timed_out:
             changed = False
             for sat_index in list(selected):
+                if deadline is not None and time.monotonic() > deadline:
+                    timed_out = True
+                    break
                 trial_selected = [item for item in selected if item != sat_index]
                 trial = _evaluate(store, trial_selected, mrt_target_s, min_simultaneous)
                 if (trial.city.qualified_area_pct or 0.0) + 1e-9 >= area_target_pct:
@@ -655,18 +671,26 @@ def greedy_select_mrt(
                     changed = True
                     break
     feasible = (current.city.qualified_area_pct or 0.0) + 1e-9 >= area_target_pct
-    note = (
-        "贪心达到面积目标，并完成反向删除；结果是近似解。"
-        if feasible
-        else "全池/贪心未达到面积目标；返回当前最好的近似方案。"
-    )
+    if timed_out and feasible:
+        status = "time_limited"
+        note = "贪心已达到面积目标，但反向删除被时限截断；结果是近似解。"
+    elif timed_out:
+        status = "time_limited"
+        note = "贪心搜索被时限截断；返回当前最好的近似方案。"
+    else:
+        status = "feasible_heuristic" if feasible else "infeasible_heuristic"
+        note = (
+            "贪心达到面积目标，并完成反向删除；结果是近似解。"
+            if feasible
+            else "全池/贪心未达到面积目标；返回当前最好的近似方案。"
+        )
     return _result(
         store,
         selected,
         method="greedy",
         area_target_pct=area_target_pct,
         mrt_target_s=mrt_target_s,
-        status="feasible_heuristic" if feasible else "infeasible_heuristic",
+        status=status,
         note=note,
         constraint_count=0,
         min_simultaneous=min_simultaneous,
@@ -2381,6 +2405,7 @@ def run_regional_mrt_selection(
     min_simultaneous: int = 1,
     method: str = "both",
     time_limit_s: int = 180,
+    greedy_time_limit_s: float | None = None,
     refine_step_seconds: float | None = None,
     timescale: Any | None = None,
     config: Mapping[str, Any] | None = None,
@@ -2412,6 +2437,7 @@ def run_regional_mrt_selection(
             mrt_target_s=mrt_target_s,
             area_target_pct=area_target_pct,
             min_simultaneous=min_simultaneous,
+            time_limit_s=greedy_time_limit_s,
         )
         if method in {"greedy", "both"}
         else None

@@ -12,15 +12,15 @@ def test_plan_job_lifecycle(monkeypatch) -> None:
     monkeypatch.setattr(
         plan_api,
         "run_plan",
-        lambda spec: {"status": "completed", "candidate_count": 2, "operation": spec.operation},
+        lambda spec, progress=None: {"status": "completed", "candidate_count": 2, "operation": spec.operation},
     )
     client = TestClient(create_app())
     response = client.post(
         "/api/v1/plans",
         json={
-            "operation": "task1",
+            "operation": "revisit",
             "aoi_code": "330100",
-            "temporal_coverage_target_pct": 90,
+            "revisit_hours": 24,
             "start_utc": "2026-11-05T00:00:00Z",
         },
     )
@@ -38,11 +38,11 @@ def test_plan_job_lifecycle(monkeypatch) -> None:
     assert body["result"]["candidate_count"] == 2
 
 
-def test_plan_rejects_missing_task_field() -> None:
+def test_plan_rejects_missing_aoi() -> None:
     client = TestClient(create_app())
     response = client.post(
         "/api/v1/plans",
-        json={"operation": "task2", "aoi_code": "330100"},
+        json={"operation": "revisit", "revisit_hours": 24},
     )
     assert response.status_code == 422
 
@@ -55,15 +55,15 @@ def test_unknown_plan_is_404() -> None:
 def test_report_endpoint_renders_html(monkeypatch, tmp_path) -> None:
     from tests.test_report import fake_result
 
-    monkeypatch.setattr(plan_api, "run_plan", lambda spec: fake_result())
+    monkeypatch.setattr(plan_api, "run_plan", lambda spec, progress=None: fake_result())
     monkeypatch.setenv("RS_REPORT_DIR", str(tmp_path))
     client = TestClient(create_app())
     response = client.post(
         "/api/v1/plans",
         json={
-            "operation": "task1",
+            "operation": "revisit",
             "aoi_code": "330100",
-            "temporal_coverage_target_pct": 90,
+            "revisit_hours": 24,
         },
     )
     job_id = response.json()["job_id"]
@@ -119,3 +119,69 @@ def test_plans_history_filters_by_operation(monkeypatch, tmp_path) -> None:
         "/api/v1/plans/history", params={"operation": "task_3_max_qualified_area"}
     ).json()
     assert [run["run_id"] for run in legacy["runs"]] == ["run-task3"]
+
+
+def test_plan_progress_is_exposed_while_running(monkeypatch) -> None:
+    def fake_run(spec, progress=None):
+        progress("opportunities", "传播与过境机会", 2, 4)
+        time.sleep(0.3)
+        return {"status": "completed", "candidate_count": 2, "operation": spec.operation}
+
+    monkeypatch.setattr(plan_api, "run_plan", fake_run)
+    client = TestClient(create_app())
+    response = client.post(
+        "/api/v1/plans",
+        json={"operation": "revisit", "aoi_code": "330100", "revisit_hours": 24},
+    )
+    job_id = response.json()["job_id"]
+
+    seen: list[dict] = []
+    for _ in range(50):
+        body = client.get(f"/api/v1/plans/{job_id}").json()
+        seen.append(body)
+        stage = (body.get("progress") or {}).get("stage")
+        if stage == "opportunities":
+            break
+        time.sleep(0.02)
+
+    assert any(
+        (item.get("progress") or {}).get("stage") == "opportunities"
+        and (item.get("progress") or {}).get("pct", 0) > 30
+        for item in seen
+    )
+    for _ in range(100):
+        body = client.get(f"/api/v1/plans/{job_id}").json()
+        if body["status"] == "completed":
+            break
+        time.sleep(0.02)
+    assert body["progress"]["stage"] == "done"
+    assert body["progress"]["pct"] == 100.0
+
+
+def test_revisit_window_is_three_t_and_capped() -> None:
+    from rs_service.plan_api import PlanCreate
+
+    spec = PlanCreate(operation="revisit", aoi_code="330100", revisit_hours=24).to_spec()
+    assert spec.operation == "revisit"
+    assert spec.horizon_h == 72.0
+    assert spec.mrt_target_minutes == 1440.0
+    assert spec.area_target_pct == 100.0
+    assert spec.fallback_area_target_pct == 100.0
+    assert spec.allow_area_fallback is False
+    assert spec.cloud_filter is False
+
+    capped = PlanCreate(operation="revisit", aoi_code="330100", revisit_hours=72).to_spec()
+    assert capped.horizon_h == 168.0
+
+    forty_eight = PlanCreate(operation="revisit", aoi_code="330100", revisit_hours=48).to_spec()
+    assert forty_eight.horizon_h == 144.0
+
+
+def test_plan_options_exposes_only_revisit() -> None:
+    client = TestClient(create_app())
+    body = client.get("/api/v1/plan-options").json()
+    assert [task["operation"] for task in body["tasks"]] == ["revisit"]
+    assert body["revisit"]["hours"] == [24, 48, 72]
+    assert body["revisit"]["area_target_pct"] == 100
+    assert body["aoi_limits"]["max_area_km2"] == 20000
+    assert all(item["level"] != "province" for item in body["aoi"])
