@@ -2,6 +2,12 @@
 
 RS-Service 的用户可见变化。版本规则见 [VERSIONING.md](https://github.com/Me106y/SIRIAgent/blob/main/docs/VERSIONING.md)。
 
+## [2.1.6] - 2026-11-16
+
+### Changed
+
+- 推荐计划不再显示平均覆盖/峰值覆盖两列，改为「对目标区域覆盖率」（该次访问覆盖网格数 ÷ 全部网格数）；整体达标看所有访问的并集。
+
 ## [2.1.5] - 2026-11-16
 
 ### Changed

@@ -625,6 +625,7 @@ def _accesses(
                     max(1.0, (slot["end"] - slot["start"]).total_seconds() / 60.0), 1
                 ),
                 "cells": len(cell_union),
+                "coverage_pct": round(100.0 * len(cell_union) / max(1, len(cells)), 2),
                 "points": points,
                 "satellites": [
                     {"sat_id": norad, "name": names.get(norad, str(norad))} for norad in sat_ids

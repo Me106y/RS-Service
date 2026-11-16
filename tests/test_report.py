@@ -113,10 +113,9 @@ def test_render_report_contains_four_sections() -> None:
         assert text in html
     assert "MAP_DATA" not in html
     assert "目标 90%" in html
-    # 推荐计划表的“平均覆盖 / 最大覆盖”必须在“口径与精度”里交代含义。
-    assert "单次平均覆盖：" in html
-    assert "单次峰值覆盖：" in html
-    assert "不叠加其它卫星" in html
+    # 推荐计划只保留“对目标区域覆盖率”，并在“口径与精度”交代含义。
+    assert "对目标区域覆盖率" in html
+    assert "整体是否达标看所有访问的并集" in html
 
 
 def test_report_carries_purchase_link_when_run_id_given() -> None:
