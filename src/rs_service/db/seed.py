@@ -94,6 +94,7 @@ def seed_catalog(session: Session, path: Path | None = None) -> dict[str, int]:
         if sat.orbit_regime == "GEO":
             sensor.swath_km = 2000.0
         sensor.confidence = item.get("confidence", "unknown")
+        sensor.source_url = item.get("source_url")
         sensor.updated_at = _now()
         sensors += 1
 
