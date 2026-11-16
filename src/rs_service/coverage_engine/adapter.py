@@ -567,7 +567,7 @@ def _accesses(
     selected_indices: Iterable[int],
     cells: Any,
 ) -> list[dict[str, Any]]:
-    """把选中卫星的过境窗口按时间合并成“访问”，并记录每次访问用了哪些卫星。"""
+    """把过境按时间累积成“一次完整覆盖”的访问；一次访问可由多颗卫星拼成。"""
 
     selected = {int(item) for item in selected_indices}
     names = {
@@ -592,40 +592,57 @@ def _accesses(
         ),
         key=lambda item: (item["start"], item["sat_index"]),
     )
-    slots: list[dict[str, Any]] = []
+    # 一次访问 = 若干卫星的过境共同拼成的一次完整覆盖；按时间顺序把过境
+    # 累积到并集覆盖全部网格为止，而不是把每颗星的单次过境各算一次访问。
+    groups: list[tuple[list[dict[str, Any]], set[int]]] = []
+    current: list[dict[str, Any]] = []
+    covered: set[int] = set()
     for item in ordered:
-        if slots and item["start"] <= slots[-1]["end"] + timedelta(minutes=1):
-            slot = slots[-1]
-            slot["end"] = max(slot["end"], item["end"])
-            slot["segments"].append(item)
+        current.append(item)
+        covered.update(item["cells"])
+        if len(covered) >= len(cells):
+            groups.append((current, covered))
+            current = []
+            covered = set()
+    if current:
+        if groups:
+            previous, previous_covered = groups[-1]
+            previous.extend(current)
+            previous_covered.update(covered)
         else:
-            slots.append({"start": item["start"], "end": item["end"], "segments": [item]})
+            groups.append((current, covered))
 
     result: list[dict[str, Any]] = []
-    for index, slot in enumerate(slots, 1):
+    for index, (segments, group_cells) in enumerate(groups, 1):
         sat_ids: list[int] = []
-        cell_union: set[int] = set()
+        seen_cells: set[int] = set()
         points: list[list[Any]] = []
-        for segment in slot["segments"]:
+        for segment in segments:
             norad = int(store.satellites[segment["sat_index"]].norad_id)
             if norad not in sat_ids:
                 sat_ids.append(norad)
-            cell_union.update(segment["cells"])
             for grid_index in sorted(segment["cells"]):
+                if grid_index in seen_cells:
+                    continue
+                seen_cells.add(grid_index)
                 cell = cells[grid_index]
                 points.append(
                     [round(cell.representative_lon, 4), round(cell.representative_lat, 4), norad]
                 )
+        start = min(segment["start"] for segment in segments)
+        end = max(segment["end"] for segment in segments)
+        imaging_minutes = sum(
+            max(1.0, (segment["end"] - segment["start"]).total_seconds() / 60.0)
+            for segment in segments
+        )
         result.append(
             {
                 "index": index,
-                "start_label": (slot["start"] + timedelta(hours=8)).strftime("%m-%d %H:%M"),
-                "end_label": (slot["end"] + timedelta(hours=8)).strftime("%H:%M"),
-                "duration_minutes": round(
-                    max(1.0, (slot["end"] - slot["start"]).total_seconds() / 60.0), 1
-                ),
-                "cells": len(cell_union),
-                "coverage_pct": round(100.0 * len(cell_union) / max(1, len(cells)), 2),
+                "start_label": (start + timedelta(hours=8)).strftime("%m-%d %H:%M"),
+                "end_label": (end + timedelta(hours=8)).strftime("%m-%d %H:%M"),
+                "duration_minutes": round(imaging_minutes, 1),
+                "cells": len(group_cells),
+                "coverage_pct": round(100.0 * len(group_cells) / max(1, len(cells)), 2),
                 "points": points,
                 "satellites": [
                     {"sat_id": norad, "name": names.get(norad, str(norad))} for norad in sat_ids

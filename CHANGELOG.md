@@ -2,6 +2,12 @@
 
 RS-Service 的用户可见变化。版本规则见 [VERSIONING.md](https://github.com/Me106y/SIRIAgent/blob/main/docs/VERSIONING.md)。
 
+## [2.1.7] - 2026-11-16
+
+### Changed
+
+- 「访问」改为按覆盖并集分组：一次访问可以由多颗卫星的过境拼成，直到覆盖全部网格；成功方案每次访问覆盖率都是 100%，不再出现 98.5%/3.2% 这种单星单次值。
+
 ## [2.1.6] - 2026-11-16
 
 ### Changed
