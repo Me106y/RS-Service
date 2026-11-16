@@ -183,7 +183,7 @@ def _notes(result: dict[str, Any]) -> list[str]:
             ceiling = cards.get("ceiling_area_pct")
             ceiling_label = f"{float(ceiling):.1f}%" if ceiling is not None else "未知"
             notes.append(
-                f"未达标：全部候选星一起算的全目录上限也只有 {ceiling_label}，不是选星算法偷懒。"
+                f"未达标：全部候选星一起算的覆盖也只有 {ceiling_label}，不是选星算法偷懒。"
                 "光学只覆盖白天，单格最长间隔至少是夜间空档（约 12–19 h）；把分辨率放宽到"
                 " ≤1km 时，实测 1 颗 FY-3F（250m）即可在 72h/24h 做到 100%。"
             )
@@ -395,7 +395,7 @@ def render_report(result: dict[str, Any], run_id: str | None = None) -> str:
         )
     elif is_revisit and not result.get("feasible"):
         headline = (
-            f"{label}：未达标，全目录上限 "
+            f"{label}：未达标，最好方案覆盖 "
             f"<em>{float(cards.get('ceiling_area_pct') or area_pct):.1f}%</em>"
         )
     else:

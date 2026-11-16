@@ -2,6 +2,12 @@
 
 RS-Service 的用户可见变化。版本规则见 [VERSIONING.md](https://github.com/Me106y/SIRIAgent/blob/main/docs/VERSIONING.md)。
 
+## [2.1.4] - 2026-11-16
+
+### Changed
+
+- 报告首屏不再显示「全目录上限」和「评估窗口」两个 KPI；未达标标题改为「最好方案覆盖 X%」。
+
 ## [2.1.3] - 2026-11-16
 
 ### Changed
