@@ -605,11 +605,17 @@ def _accesses(
     for index, slot in enumerate(slots, 1):
         sat_ids: list[int] = []
         cell_union: set[int] = set()
+        points: list[list[Any]] = []
         for segment in slot["segments"]:
             norad = int(store.satellites[segment["sat_index"]].norad_id)
             if norad not in sat_ids:
                 sat_ids.append(norad)
             cell_union.update(segment["cells"])
+            for grid_index in sorted(segment["cells"]):
+                cell = cells[grid_index]
+                points.append(
+                    [round(cell.representative_lon, 4), round(cell.representative_lat, 4), norad]
+                )
         result.append(
             {
                 "index": index,
@@ -619,6 +625,7 @@ def _accesses(
                     max(1.0, (slot["end"] - slot["start"]).total_seconds() / 60.0), 1
                 ),
                 "cells": len(cell_union),
+                "points": points,
                 "satellites": [
                     {"sat_id": norad, "name": names.get(norad, str(norad))} for norad in sat_ids
                 ],

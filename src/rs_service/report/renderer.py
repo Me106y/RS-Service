@@ -127,6 +127,7 @@ def _map_json(report_data: dict[str, Any]) -> str:
         "colors_light": playback.get("colors_light") or {},
         "total": max(1, int(playback.get("total") or 0)),
         "start_label": playback.get("start_label") or "—",
+        "accesses": playback.get("accesses") or [],
     }
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
@@ -450,6 +451,7 @@ def render_report(result: dict[str, Any], run_id: str | None = None) -> str:
         events_count=events_count,
         accesses=accesses,
         access_count=len(accesses),
+        sat_colors={str(item["sat_id"]): item["color"] for item in sats},
         tick_ms=tick_ms,
         speed_label=f"{tick_ms / 1000:.1f} 秒/步",
         accuracy_note=ACCURACY_NOTE,
