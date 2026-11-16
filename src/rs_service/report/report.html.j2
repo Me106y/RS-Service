@@ -311,7 +311,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
     <div class="mapwrap">
       <canvas id="map" width="1280" height="720" role="img" aria-label="覆盖分布与回放"></canvas>
       {% if access_count %}
-      <div class="access-head"><strong>共 {{ access_count }} 次访问</strong><span>一次访问 = 同一时间段内若干净卫星的过境；颜色仍按网格归属卫星。</span></div>
+      <div class="access-head"><strong>共 {{ access_count }} 次访问</strong><span>一次访问 = 同一时间段内若干卫星的过境；颜色仍按网格归属卫星。</span></div>
       <table class="access-table"><thead><tr><th class="num">#</th><th>时间</th><th>卫星</th><th class="num">覆盖</th><th class="num">时长</th></tr></thead><tbody>
       {% for a in accesses %}<tr>
         <td class="num">{{ a.index }}</td>
