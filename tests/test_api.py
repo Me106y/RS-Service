@@ -17,10 +17,10 @@ def test_api_health_and_satellites(seeded_db: str) -> None:
 
         health = client.get("/api/v1/health").json()
         assert health["ok"] is True
-        assert health["satellites"] == 105
+        assert health["satellites"] == 215
 
         listing = client.get("/api/v1/satellites", params={"limit": 5}).json()
-        assert listing["total"] == 105
+        assert listing["total"] == 215
         assert len(listing["items"]) == 5
 
         detail = client.get("/api/v1/satellites/40118").json()
