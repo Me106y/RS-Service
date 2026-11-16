@@ -64,3 +64,10 @@ groups, runs `compute_regional_opportunities` per group in a thread pool
 serial path; the 53-satellite / 72h opportunity stage drops from ~4.9s to
 ~1.3s on the Xihu district and keeps golden tests unchanged. A per-worker
 `timescale` avoids shared Skyfield state.
+
+## 7. 336h horizon cap (v2.2)
+
+`vendor/siriagent_skill/schemas.py` raises the `analysis_horizon_h` ceiling from
+168h to 336h, matching RS-Service's `W = min(3T, 336h)` policy. Without this,
+`PlanCreate(revisit_hours=60)` computed `W=180h` but the vendored schema rejected
+it with "must not exceed 168 hours".
