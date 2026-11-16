@@ -2,6 +2,13 @@
 
 RS-Service 的用户可见变化。版本规则见 [VERSIONING.md](https://github.com/Me106y/SIRIAgent/blob/main/docs/VERSIONING.md)。
 
+## [2.1.5] - 2026-11-16
+
+### Changed
+
+- 报告排版整体放大：正文 17px、表格 16.5px、辅助文字 ≥13.5px；KPI 数值 32px、标题 42px，行距与分区留白同步放大。
+- 「覆盖与回放」更名为「访问覆盖」；推荐计划列名改为「单次平均覆盖 / 单次峰值覆盖」，并说明单次峰值覆盖不是重访达标率。
+
 ## [2.1.4] - 2026-11-16
 
 ### Changed

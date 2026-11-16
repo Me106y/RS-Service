@@ -100,7 +100,7 @@ def test_render_report_contains_four_sections() -> None:
     html = render_report(result)
     for text in [
         "卫星构成",
-        "覆盖与回放",
+        "访问覆盖",
         "推荐计划",
         "口径与精度",
         "薄弱区",
@@ -114,8 +114,8 @@ def test_render_report_contains_four_sections() -> None:
     assert "MAP_DATA" not in html
     assert "目标 90%" in html
     # 推荐计划表的“平均覆盖 / 最大覆盖”必须在“口径与精度”里交代含义。
-    assert "平均覆盖：" in html
-    assert "最大覆盖：" in html
+    assert "单次平均覆盖：" in html
+    assert "单次峰值覆盖：" in html
     assert "不叠加其它卫星" in html
 
 
