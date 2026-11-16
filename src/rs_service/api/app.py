@@ -43,7 +43,7 @@ def create_app() -> FastAPI:
         category: str | None = Query(default=None),
         orbit: str | None = Query(default=None),
         payload_public: bool | None = Query(default=None),
-        limit: int = Query(default=50, ge=1, le=200),
+        limit: int = Query(default=50, ge=1, le=500),
         offset: int = Query(default=0, ge=0),
     ) -> dict[str, Any]:
         with session_scope() as session:

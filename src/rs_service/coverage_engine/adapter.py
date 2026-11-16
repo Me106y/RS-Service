@@ -561,6 +561,72 @@ def _aoi_outline(aoi: dict[str, Any]) -> list[list[float]]:
     return [[round(x, 6), round(y, 6)] for x, y in geometry.exterior.coords]
 
 
+
+def _accesses(
+    store: Any,
+    selected_indices: Iterable[int],
+    cells: Any,
+) -> list[dict[str, Any]]:
+    """把选中卫星的过境窗口按时间合并成“访问”，并记录每次访问用了哪些卫星。"""
+
+    selected = {int(item) for item in selected_indices}
+    names = {
+        int(store.satellites[index].norad_id): store.satellites[index].name
+        for index in selected
+    }
+    segments: dict[tuple[int, datetime, datetime], set[int]] = {}
+    for (sat_index, grid_index), windows in store.windows.items():
+        if sat_index not in selected:
+            continue
+        for window in windows:
+            start = window.start_utc.replace(second=0, microsecond=0)
+            end = window.end_utc.replace(second=0, microsecond=0)
+            if end <= start:
+                end = start + timedelta(minutes=1)
+            segments.setdefault((int(sat_index), start, end), set()).add(int(grid_index))
+
+    ordered = sorted(
+        (
+            {"sat_index": sat_index, "start": start, "end": end, "cells": cellset}
+            for (sat_index, start, end), cellset in segments.items()
+        ),
+        key=lambda item: (item["start"], item["sat_index"]),
+    )
+    slots: list[dict[str, Any]] = []
+    for item in ordered:
+        if slots and item["start"] <= slots[-1]["end"] + timedelta(minutes=1):
+            slot = slots[-1]
+            slot["end"] = max(slot["end"], item["end"])
+            slot["segments"].append(item)
+        else:
+            slots.append({"start": item["start"], "end": item["end"], "segments": [item]})
+
+    result: list[dict[str, Any]] = []
+    for index, slot in enumerate(slots, 1):
+        sat_ids: list[int] = []
+        cell_union: set[int] = set()
+        for segment in slot["segments"]:
+            norad = int(store.satellites[segment["sat_index"]].norad_id)
+            if norad not in sat_ids:
+                sat_ids.append(norad)
+            cell_union.update(segment["cells"])
+        result.append(
+            {
+                "index": index,
+                "start_label": (slot["start"] + timedelta(hours=8)).strftime("%m-%d %H:%M"),
+                "end_label": (slot["end"] + timedelta(hours=8)).strftime("%H:%M"),
+                "duration_minutes": round(
+                    max(1.0, (slot["end"] - slot["start"]).total_seconds() / 60.0), 1
+                ),
+                "cells": len(cell_union),
+                "satellites": [
+                    {"sat_id": norad, "name": names.get(norad, str(norad))} for norad in sat_ids
+                ],
+            }
+        )
+    return result
+
+
 def _playback(
     store: Any,
     selected_indices: Iterable[int],
@@ -635,6 +701,7 @@ def _playback(
         "colors": colors,
         "colors_light": colors_light,
         "start_label": (start_utc + timedelta(hours=8)).strftime("%m-%d %H:%M"),
+        "accesses": _accesses(store, selected_indices, cells),
     }
 
 
