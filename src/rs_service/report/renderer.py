@@ -401,6 +401,7 @@ def render_report(result: dict[str, Any], run_id: str | None = None) -> str:
         headline = f"{label}：选中 <em>{count}</em> 颗，达标面积 <em>{area_pct:.1f}%</em>"
 
     events_count = len(playback.get("events") or [])
+    accesses = playback.get("accesses") or []
     tick_ms = max(900, min(2500, 12000 // max(1, events_count)))
 
     environment = Environment(
@@ -447,6 +448,8 @@ def render_report(result: dict[str, Any], run_id: str | None = None) -> str:
         notes=_notes(result),
         map_json=_map_json(report_data),
         events_count=events_count,
+        accesses=accesses,
+        access_count=len(accesses),
         tick_ms=tick_ms,
         speed_label=f"{tick_ms / 1000:.1f} 秒/步",
         accuracy_note=ACCURACY_NOTE,

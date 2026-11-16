@@ -2,6 +2,14 @@
 
 RS-Service 的用户可见变化。版本规则见 [VERSIONING.md](https://github.com/Me106y/SIRIAgent/blob/main/docs/VERSIONING.md)。
 
+## [2.1.1] - 2026-11-16
+
+### Changed
+
+- 目录裁剪为 **203 颗 / 203 可规划**：删除 8 颗 >10m 光学（FY-3D/E/F/H、HY-1C/D、HY-3A、Luojia-1）与 4 颗高光谱（GF-5 01/02、ZY-1 02D、Zhuhai-1 OHS-02），使目录与可规划数一致。
+- 报告「覆盖与回放」改为**访问列表**：共 N 次访问，每次列出时间、卫星、覆盖格数、时长；旧报告保留时间轴回放。
+- `/satellites` 上限 200 → 500。
+
 ## [2.1.0] - 2026-11-16
 
 ### Added
@@ -11,6 +19,7 @@ RS-Service 的用户可见变化。版本规则见 [VERSIONING.md](https://githu
 
 ### Changed
 
+- 删除 12 颗不参与成图规划的星（FY-3D/E/F/H、HY-1C/D、HY-3A、Luojia-1 等 8 颗 >10m 光学 + 4 颗高光谱），目录与可规划数统一为 **203 颗**。
 - revisit 默认 T 改为 **48h**，可选范围收窄为 **48 / 72h**（下限 48）；W 相应为 144h / 168h（72h 封顶）。
 - 杭州实测（固定窗口、cloud off）：T=24h 从 9.662% 提到 **76.081%**（仍 fail）；T=48h 达到 **100%**（5 颗星，451s）。
 - `docs/api.md`、`README.md` 的目录与可规划数量同步为 215 / 203。

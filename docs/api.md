@@ -10,7 +10,7 @@
 | GET | `/satellites?category=&orbit=&payload_public=&limit=&offset=` | 卫星列表，默认 50 条 |
 | GET | `/aoi` | AOI 列表（浙江省级 / 市级 / 区县） |
 | GET | `/aoi/hangzhou` | 杭州 WGS84 市界 GeoJSON（Amap 转换，6406 点） |
-| GET | `/positions?at=ISO` | 215 颗星下点；`at` 省略为当前，支持时间轴 |
+| GET | `/positions?at=ISO` | 203 颗星下点；`at` 省略为当前，支持时间轴 |
 | GET | `/satellites/{norad}` | 卫星 + 传感器 + 当前 TLE |
 | GET | `/satellites/{norad}/passes?hours=24&lat=30.27&lon=120.16&min_elev=5&step=30` | 过境窗口；5° 可见，10°+太阳>10° 标 `optical_imaging_ok` |
 | GET | `/satellites/{norad}/track?hours=2&step=60&at=ISO` | 星下点轨迹；`at` 支持时间轴 |
@@ -25,7 +25,7 @@
 }
 ```
 
-当前 215 颗均为 `payload_public=true`；接口仍保留 `payload_public=false` 的脱敏分支，只返回 `sensor_type/confidence`，不返回 `raw_spec`、分辨率、幅宽。
+当前 203 颗均为 `payload_public=true`；接口仍保留 `payload_public=false` 的脱敏分支，只返回 `sensor_type/confidence`，不返回 `raw_spec`、分辨率、幅宽。
 
 示例：
 
@@ -53,7 +53,7 @@ v2.0.0 只有一个场景 `revisit`：给定区域 + 重访时间 T，求最少�
 - 结果字段：`targets.revisit_hours`、`targets.area_pct=100`、`targets.temporal_coverage_pct=null`；`window.window_rule="3T"`、`window.used_horizon_h`、`window.capped_by_tle`；`optimality ∈ proven_optimal|time_limited|infeasible_heuristic`；`suggestion` 仅在不可行且 ≤10m 时给出“放宽到 ≤1km 可 100%”的结构化建议（不自动切换）。
 - 进度：`GET /plans/{job_id}` 的 `progress={stage,label,current,total,pct,elapsed_s,updated_at}`；阶段 `prepare/grid/opportunities/cloud/selection/metrics/playback/done`。机会阶段 `current/total` 是已传播卫星数；选星阶段 1/2、2/2。前端 1.2s 轮询，不提供 ETA。
 - AOI：只支持市/区县 adcode 或浙江省内 `POLYGON` WKT；自定义面积 >20,000 km² 返回 `aoi_too_large`，省级 AOI 也返回 `aoi_too_large`。
-- 载荷：只对光学开放；`sensor_types` 固定 `["optical"]`；`max_resolution_m` 只接受 1/2/5/10。目录 215 颗（211 光学 + 4 高光谱），≤10m 光学可规划 203 颗（含 3 颗 Sentinel-2、110 颗 PlanetScope Flock）；新增星按 `official/vendor/approx` 标 `confidence` 并保存 `source_url`，报告与目录可追溯。高光谱保留在星历，不参与本场景。
+- 载荷：只对光学开放；`sensor_types` 固定 `["optical"]`；`max_resolution_m` 只接受 1/2/5/10。目录 203 颗（全部 ≤10m 光学，含 3 颗 Sentinel-2、110 颗 PlanetScope Flock），可规划 203 颗；新增星按 `official/vendor/approx` 标 `confidence` 并保存 `source_url`，报告与目录可追溯。高光谱保留在星历，不参与本场景。
 - 云量：默认**不过滤**；`cloud_filter=true` 时按 AOI 内网格代表点取 Open-Meteo 逐小时 `cloud_cover`，逐网格剔除 >70% 的访问；取不到时不过滤并在 assumptions 说明。
 - 成像门限：非 SAR 最小仰角 ≥10°；光学另要求目标地面太阳高度 ≥10°（`RS_OPTICAL_SUN_MIN_DEG`，默认 10）；夜间/低仰角窗口不进入覆盖与选星。
 - 选星限时：贪心 ≤60s（`greedy_time_limit_s`），ILP ≤30s（`selection_time_limit_s`）；到点返回当前最好集合，`optimality=time_limited`。不可行时不允许返回“0 颗星、0%”，必须有最佳努力与全目录上限。
@@ -88,11 +88,11 @@ DSH 侧工具名带前缀：`mcp__rs-service__<tool>`。
 
 | 工具 | 入参 | 出参 |
 | --- | --- | --- |
-| `list_satellites` | `category?`, `orbit?` | 215 颗摘要（norad/name/category/orbit/payload_public） |
+| `list_satellites` | `category?`, `orbit?` | 203 颗摘要（norad/name/category/orbit/payload_public） |
 | `get_satellite` | `sat_id` | 目录 + 传感器摘要 + TLE 年龄 |
 | `next_passes` | `sat_id`, `hours?`, `lat?`, `lon?`, `min_elev?` | 过境窗口（AOS/LOS/TCA/最大仰角/太阳高度/光学可用） |
 | `ground_track` | `sat_id`, `hours?`, `step_s?` | 星下点轨迹 |
-| `list_positions` | — | 215 颗当前星下点（批量） |
+| `list_positions` | — | 203 颗当前星下点（批量） |
 | `current_position` | `sat_id` | 当前星下点 |
 | `sync_status` | — | 最近同步、重试状态、TLE 最大年龄 |
 | `list_aoi` | `level?`, `query?` | 浙江省级 / 市级 / 区县 AOI（adcode、名称、bbox、面积） |
