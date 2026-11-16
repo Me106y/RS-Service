@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dataclass_replace
 from pathlib import Path
 from threading import RLock
 from typing import Any, Callable
@@ -457,6 +459,106 @@ def _request_summary(
 
 
 
+def _opportunity_workers(total: int) -> int:
+    """并行机会计算的工作线程数；默认最多 8，可用环境变量覆盖。"""
+
+    configured = os.environ.get("RS_OPPORTUNITY_WORKERS")
+    if configured is not None:
+        try:
+            value = int(configured)
+        except ValueError:
+            value = 1
+        return max(1, min(value, max(1, total)))
+    return max(1, min(8, os.cpu_count() or 1, max(1, total)))
+
+
+def _compute_opportunities(
+    satellites: list[Any],
+    grid: Any,
+    start_utc: Any,
+    end_utc: Any,
+    config: dict[str, Any],
+    *,
+    decision_step_s: int,
+    cell_chunk_size: int,
+    timescale: Any,
+    progress: Callable[[str, str, int | None, int | None], None] | None,
+) -> regional_opportunities.OpportunityStore:
+    """按卫星分段并行计算，再按 sat_index 偏移确定性地归并。"""
+
+    total = len(satellites)
+    workers = _opportunity_workers(total)
+    if workers <= 1 or total <= 1:
+        return regional_opportunities.compute_regional_opportunities(
+            satellites,
+            grid,
+            start_utc,
+            end_utc,
+            config,
+            decision_step_s=decision_step_s,
+            cell_chunk_size=cell_chunk_size,
+            timescale=timescale,
+        )
+    chunk = (total + workers - 1) // workers
+    groups = [
+        (offset, satellites[offset : offset + chunk])
+        for offset in range(0, total, chunk)
+    ]
+    stores: list[tuple[int, regional_opportunities.OpportunityStore]] = []
+    done = 0
+    with ThreadPoolExecutor(max_workers=min(workers, len(groups))) as pool:
+        futures = {
+            pool.submit(
+                regional_opportunities.compute_regional_opportunities,
+                subset,
+                grid,
+                start_utc,
+                end_utc,
+                config,
+                decision_step_s=decision_step_s,
+                cell_chunk_size=cell_chunk_size,
+                timescale=None,
+            ): offset
+            for offset, subset in groups
+        }
+        for future in as_completed(futures):
+            offset = futures[future]
+            store = future.result()
+            stores.append((offset, store))
+            done += store.n_satellites
+            if progress is not None:
+                progress("opportunities", f"区域机会：已完成 {done}/{total}", done, total)
+    stores.sort(key=lambda item: item[0])
+    merged: dict[tuple[int, int], tuple[Any, ...]] = {}
+    for offset, store in stores:
+        for (sat_index, grid_index), windows in store.windows.items():
+            merged[(offset + sat_index, grid_index)] = tuple(
+                dataclass_replace(window, sat_index=offset + window.sat_index)
+                for window in windows
+            )
+    first = stores[0][1]
+    metadata = dict(first.metadata)
+    metadata["n_nonempty_pairs"] = len(merged)
+    metadata["propagation_failures"] = [
+        item for _offset, store in stores
+        for item in (store.metadata.get("propagation_failures") or [])
+    ]
+    metadata["partial_propagation_failures"] = [
+        item for _offset, store in stores
+        for item in (store.metadata.get("partial_propagation_failures") or [])
+    ]
+    return regional_opportunities.OpportunityStore(
+        satellites=tuple(satellites),
+        grid=grid,
+        start_utc=first.start_utc,
+        end_utc=first.end_utc,
+        detection_step_s=first.detection_step_s,
+        decision_step_s=first.decision_step_s,
+        windows=merged,
+        metadata=metadata,
+    )
+
+
 def execute_request(
     request: SkillRequest,
     *,
@@ -531,7 +633,7 @@ def execute_request(
     if store is None:
         if progress is not None:
             progress("opportunities", "传播与过境机会", 0, len(satellites))
-        store = regional_opportunities.compute_regional_opportunities(
+        store = _compute_opportunities(
             satellites,
             grid,
             request.start_utc,
@@ -540,16 +642,7 @@ def execute_request(
             decision_step_s=request.decision_step_s,
             cell_chunk_size=256,
             timescale=timescale,
-            progress=(
-                None
-                if progress is None
-                else lambda fraction, label: progress(
-                    "opportunities",
-                    label,
-                    int(round(float(fraction) * len(satellites))),
-                    len(satellites),
-                )
-            ),
+            progress=progress,
         )
         _store_cached_opportunities(cache_key, store)
     if progress is not None:

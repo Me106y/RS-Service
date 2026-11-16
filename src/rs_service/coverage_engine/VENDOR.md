@@ -54,3 +54,13 @@ selection and reverse-delete, returns the current best set and status
 `time_limited`. `run_regional_mrt_selection` exposes `greedy_time_limit_s` and
 the facade passes `request.greedy_time_limit_s` (default 60s). Without it the
 168h / 180-candidate pool can spend minutes in greedy search.
+
+## 6. Parallel opportunity computation (v2.0.0)
+
+`facade._compute_opportunities` splits the satellite list into contiguous
+groups, runs `compute_regional_opportunities` per group in a thread pool
+(`RS_OPPORTUNITY_WORKERS`, default 8), and merges windows by offsetting
+`sat_index`. With a fixed `start_utc` the merged result is identical to the
+serial path; the 53-satellite / 72h opportunity stage drops from ~4.9s to
+~1.3s on the Xihu district and keeps golden tests unchanged. A per-worker
+`timescale` avoids shared Skyfield state.
