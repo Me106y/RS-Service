@@ -64,6 +64,7 @@ class PlanCreate(BaseModel):
     aoi_wkt: str | None = None
     start_utc: datetime | None = None
     revisit_hours: int = Field(default=48, ge=48, le=168)
+    window_hours: int | None = Field(default=None, ge=48, le=336)
     sensor_types: list[Literal["optical"]] = Field(default=DEFAULT_SENSOR_TYPES, min_length=1)
     max_resolution_m: float = Field(default=10.0, gt=0, le=10.0)
     cloud_filter: bool = False
@@ -83,7 +84,11 @@ class PlanCreate(BaseModel):
         start = self.start_utc or datetime.now(UTC)
         if start.tzinfo is None:
             start = start.replace(tzinfo=UTC)
-        horizon = min(3.0 * float(self.revisit_hours), 336.0)
+        horizon = (
+            float(self.window_hours)
+            if self.window_hours is not None
+            else min(3.0 * float(self.revisit_hours), 336.0)
+        )
         return PlanSpec(
             operation="revisit",
             aoi_code=self.aoi_code,
@@ -91,6 +96,7 @@ class PlanCreate(BaseModel):
             start_utc=start,
             horizon_h=horizon,
             auto_expand=False,
+            window_user_set=self.window_hours is not None,
             sensor_types=tuple(self.sensor_types),
             max_resolution_m=self.max_resolution_m,
             pointing="nadir",
@@ -291,7 +297,8 @@ def plan_options() -> dict[str, Any]:
             "max_hours": 168,
             "default_hours": 48,
             "window_cap_hours": 336,
-            "window_rule": "min(3T, 336)",
+            "window_rule": "min(3T, 336)，可被 window_hours 覆盖",
+            "window_user_settable": True,
             "area_target_pct": 100,
             "cloud_filter_default": False,
         },

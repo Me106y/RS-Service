@@ -181,8 +181,16 @@ def test_revisit_window_is_three_t_and_capped() -> None:
     capped = PlanCreate(operation="revisit", aoi_code="330100", revisit_hours=168).to_spec()
     assert capped.horizon_h == 336.0
 
+    custom = PlanCreate(
+        operation="revisit", aoi_code="330100", revisit_hours=48, window_hours=120
+    ).to_spec()
+    assert custom.horizon_h == 120.0
+    assert custom.window_user_set is True
+
     with pytest.raises(ValidationError):
         PlanCreate(operation="revisit", aoi_code="330100", revisit_hours=47)
+    with pytest.raises(ValidationError):
+        PlanCreate(operation="revisit", aoi_code="330100", window_hours=400)
 
 
 def test_plan_options_exposes_only_revisit() -> None:
@@ -193,6 +201,7 @@ def test_plan_options_exposes_only_revisit() -> None:
     assert body["revisit"]["max_hours"] == 168
     assert body["revisit"]["default_hours"] == 48
     assert body["revisit"]["window_cap_hours"] == 336
+    assert body["revisit"]["window_user_settable"] is True
     assert body["revisit"]["area_target_pct"] == 100
     assert body["aoi_limits"]["max_area_km2"] == 20000
     assert all(item["level"] != "province" for item in body["aoi"])

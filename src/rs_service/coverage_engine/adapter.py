@@ -116,6 +116,7 @@ class PlanSpec:
     cloud_filter: bool = True
     cloud_threshold_pct: float = 70.0
     auto_expand: bool = False
+    window_user_set: bool = False
 
 
 @dataclass(frozen=True)
@@ -1012,10 +1013,14 @@ def run_plan(
             "used_horizon_h": horizon,
             "expanded": expanded,
             "attempts": attempt,
-            "window_rule": "min(3T, 336)" if spec.operation == "revisit" else None,
+            "window_rule": (
+                "user" if spec.operation == "revisit" and spec.window_user_set
+                else "min(3T, 336)" if spec.operation == "revisit"
+                else None
+            ),
             "revisit_hours": revisit_hours,
             "cap_hours": 336.0,
-            "capped_by_horizon": capped,
+            "capped_by_horizon": capped and not spec.window_user_set,
             "capped_by_tle": False,
         }
         result["auto_expand"] = {
