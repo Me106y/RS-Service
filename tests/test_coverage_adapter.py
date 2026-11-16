@@ -233,7 +233,7 @@ def test_task1_auto_expand_ladder_only_for_task1() -> None:
 def test_revisit_has_no_auto_expand() -> None:
     with pytest.raises(ValidationError):
         PlanCreate(operation="task2", aoi_code="330100", mrt_target_minutes=24)
-    model = PlanCreate(operation="revisit", aoi_code="330100", revisit_hours=24)
+    model = PlanCreate(operation="revisit", aoi_code="330100", revisit_hours=48)
     assert model.to_spec().auto_expand is False
 
 
@@ -243,7 +243,7 @@ def test_single_revisit_task() -> None:
 
 def test_plan_create_requires_aoi() -> None:
     with pytest.raises(ValidationError):
-        PlanCreate(operation="revisit", revisit_hours=24)
+        PlanCreate(operation="revisit", revisit_hours=48)
     with pytest.raises(ValidationError):
         PlanCreate(
             operation="revisit",
@@ -259,14 +259,14 @@ def test_plan_create_to_spec_defaults_timezone() -> None:
     model = PlanCreate(
         operation="revisit",
         aoi_code="330100",
-        revisit_hours=24,
+        revisit_hours=48,
         start_utc=datetime(2026, 11, 5),
     )
     spec = model.to_spec()
     assert spec.start_utc.tzinfo is not None
     assert spec.sensor_types == ("optical",)
-    assert spec.horizon_h == 72.0
-    assert spec.mrt_target_minutes == 1440.0
+    assert spec.horizon_h == 144.0
+    assert spec.mrt_target_minutes == 2880.0
 
 
 def test_payload_sar_is_exempt_from_solar_constraint() -> None:

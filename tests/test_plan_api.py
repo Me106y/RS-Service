@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import time
 
+import pytest
+from pydantic import ValidationError
+
 from fastapi.testclient import TestClient
 
 from rs_service import plan_api
@@ -20,7 +23,7 @@ def test_plan_job_lifecycle(monkeypatch) -> None:
         json={
             "operation": "revisit",
             "aoi_code": "330100",
-            "revisit_hours": 24,
+            "revisit_hours": 48,
             "start_utc": "2026-11-05T00:00:00Z",
         },
     )
@@ -42,7 +45,7 @@ def test_plan_rejects_missing_aoi() -> None:
     client = TestClient(create_app())
     response = client.post(
         "/api/v1/plans",
-        json={"operation": "revisit", "revisit_hours": 24},
+        json={"operation": "revisit", "revisit_hours": 48},
     )
     assert response.status_code == 422
 
@@ -63,7 +66,7 @@ def test_report_endpoint_renders_html(monkeypatch, tmp_path) -> None:
         json={
             "operation": "revisit",
             "aoi_code": "330100",
-            "revisit_hours": 24,
+            "revisit_hours": 48,
         },
     )
     job_id = response.json()["job_id"]
@@ -131,7 +134,7 @@ def test_plan_progress_is_exposed_while_running(monkeypatch) -> None:
     client = TestClient(create_app())
     response = client.post(
         "/api/v1/plans",
-        json={"operation": "revisit", "aoi_code": "330100", "revisit_hours": 24},
+        json={"operation": "revisit", "aoi_code": "330100", "revisit_hours": 48},
     )
     job_id = response.json()["job_id"]
 
@@ -161,10 +164,10 @@ def test_plan_progress_is_exposed_while_running(monkeypatch) -> None:
 def test_revisit_window_is_three_t_and_capped() -> None:
     from rs_service.plan_api import PlanCreate
 
-    spec = PlanCreate(operation="revisit", aoi_code="330100", revisit_hours=24).to_spec()
+    spec = PlanCreate(operation="revisit", aoi_code="330100").to_spec()
     assert spec.operation == "revisit"
-    assert spec.horizon_h == 72.0
-    assert spec.mrt_target_minutes == 1440.0
+    assert spec.horizon_h == 144.0
+    assert spec.mrt_target_minutes == 2880.0
     assert spec.area_target_pct == 100.0
     assert spec.fallback_area_target_pct == 100.0
     assert spec.allow_area_fallback is False
@@ -173,15 +176,15 @@ def test_revisit_window_is_three_t_and_capped() -> None:
     capped = PlanCreate(operation="revisit", aoi_code="330100", revisit_hours=72).to_spec()
     assert capped.horizon_h == 168.0
 
-    forty_eight = PlanCreate(operation="revisit", aoi_code="330100", revisit_hours=48).to_spec()
-    assert forty_eight.horizon_h == 144.0
+    with pytest.raises(ValidationError):
+        PlanCreate(operation="revisit", aoi_code="330100", revisit_hours=24)
 
 
 def test_plan_options_exposes_only_revisit() -> None:
     client = TestClient(create_app())
     body = client.get("/api/v1/plan-options").json()
     assert [task["operation"] for task in body["tasks"]] == ["revisit"]
-    assert body["revisit"]["hours"] == [24, 48, 72]
+    assert body["revisit"]["hours"] == [48, 72]
     assert body["revisit"]["area_target_pct"] == 100
     assert body["aoi_limits"]["max_area_km2"] == 20000
     assert all(item["level"] != "province" for item in body["aoi"])

@@ -40,7 +40,7 @@ TASKS: tuple[dict[str, Any], ...] = (
         "label": "区域重访",
         "required": ["revisit_hours"],
         "advanced": [],
-        "description": "给定区域与重访时间 T，求最少卫星；窗口自动取 min(3T, 168h)，面积目标固定 100%。",
+        "description": "给定区域与重访时间 T（48/72h），求最少卫星；窗口自动取 min(3T, 168h)，面积目标固定 100%。",
     },
 )
 
@@ -63,7 +63,7 @@ class PlanCreate(BaseModel):
     aoi_code: str | None = None
     aoi_wkt: str | None = None
     start_utc: datetime | None = None
-    revisit_hours: Literal[24, 48, 72] = 24
+    revisit_hours: Literal[48, 72] = 48
     sensor_types: list[Literal["optical"]] = Field(default=DEFAULT_SENSOR_TYPES, min_length=1)
     max_resolution_m: float = Field(default=10.0, gt=0, le=10.0)
     cloud_filter: bool = False
@@ -287,8 +287,8 @@ def plan_options() -> dict[str, Any]:
         "tasks": list(TASKS),
         "advanced": list(ADVANCED_FIELDS),
         "revisit": {
-            "hours": [24, 48, 72],
-            "default_hours": 24,
+            "hours": [48, 72],
+            "default_hours": 48,
             "window_rule": "min(3T, 168)",
             "area_target_pct": 100,
             "cloud_filter_default": False,

@@ -11,6 +11,7 @@ RS-Service 的用户可见变化。版本规则见 [VERSIONING.md](https://githu
 
 ### Changed
 
+- revisit 默认 T 改为 **48h**，可选范围收窄为 **48 / 72h**（下限 48）；W 相应为 144h / 168h（72h 封顶）。
 - 杭州实测（固定窗口、cloud off）：T=24h 从 9.662% 提到 **76.081%**（仍 fail）；T=48h 达到 **100%**（5 颗星，451s）。
 - `docs/api.md`、`README.md` 的目录与可规划数量同步为 215 / 203。
 
