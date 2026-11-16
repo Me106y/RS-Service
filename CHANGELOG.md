@@ -2,6 +2,12 @@
 
 RS-Service 的用户可见变化。版本规则见 [VERSIONING.md](https://github.com/Me106y/SIRIAgent/blob/main/docs/VERSIONING.md)。
 
+## [2.2.1] - 2026-11-16
+
+### Fixed
+
+- 放开 vendored `analysis_horizon_h` 的 168h 上限到 336h；否则 T>56h 时 `W=3T` 会被 schema 拒绝，和新的 336h 策略不一致。
+
 ## [2.2.0] - 2026-11-16
 
 ### Changed

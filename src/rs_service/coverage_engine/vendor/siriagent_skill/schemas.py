@@ -197,7 +197,7 @@ PARAMETER_SPECS: dict[str, dict[str, Any]] = {
         "type": "number",
         "required": False,
         "default": 8.0,
-        "range": "0 < value <= 168",
+        "range": "0 < value <= 336",
         "description": "分析时长，单位小时。",
     },
     "tle_source": {
@@ -784,8 +784,8 @@ def normalize_request(payload: Mapping[str, Any]) -> SkillRequest:
     city_adcode = CITY_NAME_TO_CODE.get(city_text, city_text)
 
     horizon = _as_float(payload, "analysis_horizon_h", 8.0)
-    if not 0.0 < horizon <= 168.0:
-        raise SkillInputError("analysis_horizon_h 必须大于 0 且不超过 168 小时。")
+    if not 0.0 < horizon <= 336.0:
+        raise SkillInputError("analysis_horizon_h 必须大于 0 且不超过 336 小时。")
     grid_size_km = _as_float(payload, "grid_size_km", 5.0)
     if not 0.0 < grid_size_km <= 50.0:
         raise SkillInputError("grid_size_km 必须大于 0 且不超过 50 km。")
