@@ -38,8 +38,8 @@
 :root[data-theme="light"] .play:hover{background:#eef6f9}
 *{box-sizing:border-box}
 html{scroll-behavior:smooth}
-html,body{margin:0;background:var(--ink);color:var(--txt);font-family:var(--sans);line-height:1.65}
-body{display:grid;grid-template-columns:288px minmax(0,1fr);min-height:100vh}
+html,body{margin:0;background:var(--ink);color:var(--txt);font-family:var(--sans);line-height:1.7;font-size:17px}
+body{display:grid;grid-template-columns:312px minmax(0,1fr);min-height:100vh}
 ::selection{background:rgba(72,199,217,.28);color:#fff}
 :focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
 *{scrollbar-color:var(--line) transparent;scrollbar-width:thin}
@@ -54,55 +54,55 @@ body{display:grid;grid-template-columns:288px minmax(0,1fr);min-height:100vh}
 .brand b{font-size:16px;letter-spacing:.01em;font-weight:700}
 .brand span{display:block;font-size:12px;color:var(--dim);letter-spacing:.16em;margin-top:1px}
 nav{display:grid;gap:2px;border-top:1px solid var(--line-soft);padding-top:20px}
-nav a{display:flex;gap:10px;align-items:baseline;padding:8px 10px;border-radius:6px;color:var(--muted);text-decoration:none;font-size:13.5px}
+nav a{display:flex;gap:10px;align-items:baseline;padding:10px 12px;border-radius:6px;color:var(--muted);text-decoration:none;font-size:15px}
 nav a:hover{background:var(--panel-2);color:var(--txt)}
 nav a[aria-current="true"]{background:var(--panel-2);color:var(--txt);box-shadow:inset 2px 0 0 var(--amber)}
 nav a[aria-current="true"] .idx{color:var(--amber)}
-nav a .idx{font-family:var(--mono);font-size:12px;color:var(--dim);min-width:16px}
-.side .foot{margin-top:auto;font-size:12px;color:var(--dim);line-height:1.7;border-top:1px solid var(--line-soft);padding-top:16px}
+nav a .idx{font-family:var(--mono);font-size:12.5px;color:var(--dim);min-width:18px}
+.side .foot{margin-top:auto;font-size:13px;color:var(--dim);line-height:1.75;border-top:1px solid var(--line-soft);padding-top:16px}
 
 /* ---------- main ---------- */
-main{min-width:0;padding:44px 46px 96px}
-h1{font-size:clamp(26px,2.4vw,34px);line-height:1.28;margin:0 0 10px;font-weight:700;letter-spacing:-.015em;max-width:none}
+main{min-width:0;padding:52px 54px 112px}
+h1{font-size:clamp(32px,2.8vw,42px);line-height:1.22;margin:0 0 12px;font-weight:700;letter-spacing:-.02em;max-width:none}
 h1 em{font-style:normal;color:var(--amber)}
 .nowrap{white-space:nowrap}
 
 
 /* instrument strip */
 .strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(0,1fr));gap:0;margin:30px 0 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line-soft)}
-.strip>div{padding:14px 16px 15px;border-right:1px solid var(--line-soft)}
+.strip>div{padding:18px 20px 19px;border-right:1px solid var(--line-soft)}
 .strip>div:last-child{border-right:0}
 .context{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border-bottom:1px solid var(--line)}
-.context>div{padding:12px 16px 13px;border-right:1px solid var(--line-soft);min-width:0}
+.context>div{padding:15px 20px 16px;border-right:1px solid var(--line-soft);min-width:0}
 .context>div:last-child{border-right:0}
-.context .k{display:block;font-size:12.5px;color:var(--dim);letter-spacing:.08em;margin-bottom:2px}
-.context .v{display:block;font-size:15px;color:var(--txt);line-height:1.45}
-.context .v.mono{font-family:var(--mono);font-size:13.5px;letter-spacing:-.01em;white-space:nowrap}
-.context .v small{display:block;font-size:12px;color:var(--muted);margin-top:1px;font-weight:400}
-.strip .lab{font-size:12.5px;color:var(--dim);letter-spacing:.06em}
-.strip .val{font-family:var(--mono);font-size:24px;letter-spacing:-.02em;margin-top:2px}
-.strip .val small{font-size:13px;color:var(--muted);margin-left:2px}
+.context .k{display:block;font-size:13.5px;color:var(--dim);letter-spacing:.08em;margin-bottom:3px}
+.context .v{display:block;font-size:17px;color:var(--txt);line-height:1.45}
+.context .v.mono{font-family:var(--mono);font-size:15.5px;letter-spacing:-.01em;white-space:nowrap}
+.context .v small{display:block;font-size:13px;color:var(--muted);margin-top:2px;font-weight:400}
+.strip .lab{font-size:13.5px;color:var(--dim);letter-spacing:.06em}
+.strip .val{font-family:var(--mono);font-size:32px;letter-spacing:-.02em;margin-top:3px}
+.strip .val small{font-size:15px;color:var(--muted);margin-left:3px}
 .strip .val.amber{color:var(--amber)}
 
-section{margin-top:52px;scroll-margin-top:24px}
-h2{font-size:19px;margin:0 0 4px;font-weight:700;letter-spacing:-.01em}
-.lede{color:var(--muted);font-size:14px;margin:0 0 18px;max-width:72ch}
+section{margin-top:58px;scroll-margin-top:24px}
+h2{font-size:23px;margin:0 0 5px;font-weight:700;letter-spacing:-.012em}
+.lede{color:var(--muted);font-size:16.5px;line-height:1.65;margin:0 0 20px;max-width:72ch}
 
 .glossary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 30px;margin:12px 0 20px;padding:12px 14px;border-top:1px solid var(--line-soft);border-bottom:1px solid var(--line-soft)}
 .glossary>div{display:grid;grid-template-columns:48px minmax(0,1fr);gap:9px;align-items:baseline}
-.glossary dt{font-size:11px;color:var(--dim);letter-spacing:.06em;white-space:nowrap}
-.glossary dd{margin:0;font-size:12px;line-height:1.6;color:var(--muted)}
+.glossary dt{font-size:12px;color:var(--dim);letter-spacing:.06em;white-space:nowrap}
+.glossary dd{margin:0;font-size:13.5px;line-height:1.65;color:var(--muted)}
 .glossary b{color:var(--txt);font-weight:600}
 @media (max-width:820px){.glossary{grid-template-columns:1fr;gap:7px}}
 
-table{width:100%;border-collapse:collapse;font-size:15px}
-th{text-align:left;padding:10px 12px;font-size:12.5px;letter-spacing:.06em;color:var(--dim);border-bottom:1px solid var(--line);white-space:nowrap}
-td{padding:12px;border-bottom:1px solid var(--line-soft);vertical-align:middle}
+table{width:100%;border-collapse:collapse;font-size:16.5px}
+th{text-align:left;padding:12px 14px;font-size:13.5px;letter-spacing:.06em;color:var(--dim);border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:14px;border-bottom:1px solid var(--line-soft);vertical-align:middle}
 tr:hover td{background:#0b121a}
 td.num,th.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:right;letter-spacing:-.01em}
 .swatch{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:9px;vertical-align:1px;background:var(--c,#2b4557)}
 :root[data-theme="light"] .swatch{background:var(--c-light,var(--c,#c2d0db))}
-.tag{font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:1px 6px}
+.tag{font-size:13px;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:2px 7px}
 
 /* map */
 .mapwrap{max-width:none;border:1px solid var(--line);border-radius:10px;background:radial-gradient(120% 120% at 70% 10%,#0e1922,#080d12 70%);overflow:hidden}
@@ -117,25 +117,25 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
 input[type=range]::-moz-range-track{height:3px;background:var(--line);border-radius:2px}
 input[type=range]::-moz-range-thumb{width:12px;height:12px;border:0;border-radius:50%;background:var(--amber);box-shadow:0 0 0 4px rgba(240,165,43,.16)}
 .clock{font-family:var(--mono);font-size:13.5px;color:var(--txt);font-variant-numeric:tabular-nums;min-width:96px;text-align:right}
-.access-head{display:flex;align-items:baseline;gap:12px;padding:12px 16px 0;font-size:13px;color:var(--muted)}
-.access-head strong{font-family:var(--mono);font-size:15px;color:var(--txt);font-weight:600}
-.access-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;padding:4px 16px 14px}
+.access-head{display:flex;align-items:baseline;gap:12px;padding:16px 20px 0;font-size:15px;color:var(--muted)}
+.access-head strong{font-family:var(--mono);font-size:18px;color:var(--txt);font-weight:600}
+.access-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:18px;padding:6px 20px 18px}
 .access-card{margin:0;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--panel)}
-.access-map{display:block;width:100%;height:auto;background:var(--map-fill)}
-.access-card figcaption{padding:9px 11px 11px;font-size:13px;color:var(--muted);line-height:1.5}
+.access-map{display:block;width:100%;height:auto;aspect-ratio:3/2;background:var(--map-fill)}
+.access-card figcaption{padding:12px 14px 14px;font-size:15px;line-height:1.55;color:var(--muted)}
 .access-card figcaption .swatch{margin-right:4px}
 .access-no{font-family:var(--mono);color:var(--txt);font-weight:600;margin-right:5px}
 .access-sats{color:var(--txt)}
-.access-details{margin:0 16px 14px;font-size:13px;color:var(--muted)}
+.access-details{margin:0 20px 18px;font-size:14.5px;color:var(--muted)}
 .access-details summary{cursor:pointer;padding:6px 0}
-.access-table{margin:4px 0 0;width:100%;font-size:13.5px}
+.access-table{margin:6px 0 0;width:100%;font-size:15px}
 .access-table th{padding:7px 8px}
 .access-table td{padding:7px 8px;border-bottom:1px solid var(--line-soft)}
 .access-table tr:last-child td{border-bottom:0}
-.legend{display:flex;flex-wrap:wrap;gap:18px;padding:12px 16px 14px;font-size:13px;color:var(--muted);border-top:1px solid var(--line-soft)}
+.legend{display:flex;flex-wrap:wrap;gap:20px;padding:15px 20px 17px;font-size:14.5px;color:var(--muted);border-top:1px solid var(--line-soft)}
 .legend .swatch{vertical-align:0}
 
-ul.notes{margin:10px 0 0;padding-left:18px;color:var(--muted);font-size:14px;max-width:76ch}
+ul.notes{margin:12px 0 0;padding-left:20px;color:var(--muted);font-size:16px;max-width:76ch}
 ul.notes li{margin:5px 0}
 pre.err{background:#1a0f0f;border:1px solid #43201d;color:#f0b4ad;padding:14px;border-radius:8px;font-family:var(--mono);font-size:12px;overflow:auto}
 
@@ -193,7 +193,7 @@ td .seg{display:inline-block;margin-left:7px;padding:1px 6px;border:1px solid va
   .theme-toggle .label{display:none}
 }
 
-footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:var(--dim);font-size:12px;line-height:1.8;max-width:82ch}
+footer{margin-top:64px;padding-top:20px;border-top:1px solid var(--line);color:var(--dim);font-size:13.5px;line-height:1.8;max-width:82ch}
 
 @media (max-width:1080px){
   body{grid-template-columns:1fr}
@@ -270,7 +270,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
   </div>
   <nav>
     <a href="#plan"><span class="idx">01</span>卫星构成</a>
-    <a href="#cover"><span class="idx">02</span>覆盖与回放</a>
+    <a href="#cover"><span class="idx">02</span>访问覆盖</a>
     <a href="#purchase"><span class="idx">03</span>推荐计划</a>
     <a href="#notes"><span class="idx">04</span>口径与精度</a>
   </nav>
@@ -313,8 +313,8 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
   </section>
 
   <section id="cover">
-    <h2>覆盖与回放</h2>
-    <p class="lede">每个点是一个裁剪网格单元；颜色表示覆盖该网格总时长最多的卫星。{% if access_count %}本窗口共 <b>{{ access_count }}</b> 次访问；下方每张图对应一次访问，标出该次用到的卫星。{% else %}拖动时间轴查看覆盖累积，点按播放按 {{ speed_label }} 推进。{% endif %}</p>
+    <h2>访问覆盖</h2>
+    <p class="lede">每个点是一个裁剪网格单元；颜色表示这次访问覆盖该网格的卫星。{% if access_count %}本窗口共 <b>{{ access_count }}</b> 次访问；单次过境的峰值覆盖不是重访达标率，本方案由多次访问共同补齐全部网格。下方每张图对应一次访问。{% else %}拖动时间轴查看覆盖累积，点按播放按 {{ speed_label }} 推进。{% endif %}</p>
     <div class="mapwrap">
       {% if access_count %}
       <div class="access-head"><strong>共 {{ access_count }} 次访问</strong><span>每张图对应一次访问；颜色表示该次覆盖该网格的卫星。</span></div>
@@ -364,10 +364,11 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:v
   <section id="purchase">
     <h2>推荐计划</h2>
     <p class="lede">求解状态 <b>{{ optimality }}</b>；可行性 <b>{{ "是" if feasible else "否" }}</b>。下表是选中卫星在本窗口内的过境窗口。</p>
-    <table><thead><tr><th>卫星</th><th>开始</th><th>结束</th><th class="num">时长</th><th class="num">平均覆盖</th><th class="num">最大覆盖</th></tr></thead><tbody>
+    <table><thead><tr><th>卫星</th><th>开始</th><th>结束</th><th class="num">时长</th><th class="num">单次平均覆盖</th><th class="num">单次峰值覆盖</th></tr></thead><tbody>
     {% for p in passes %}<tr><td>{{ p.satellite }}{% if p.segment_count > 1 %}<span class="seg">第 {{ p.segment_index }}/{{ p.segment_count }} 段</span>{% endif %}</td><td class="mono">{{ p.start_label }}</td><td class="mono">{{ p.end_label }}</td><td class="num">{{ "%.1f"|format(p.duration_minutes) }} min</td><td class="num">{{ "%.2f"|format(p.average_covered_area_pct) }}%</td><td class="num">{{ "%.2f"|format(p.maximum_covered_area_pct) }}%</td></tr>{% endfor %}
     </tbody></table>
     {% if has_multi_segment %}<p class="lede">同一颗卫星可能有两段可见窗口（中间有短暂空档），因此分段列出；这不是重复选星。</p>{% endif %}
+    <p class="fine">「单次峰值覆盖」只表示一次过境在同一时刻最多盖住多少网格，不是重访达标率；单次没盖到的网格由其它访问补齐，重访按每个网格的最长间隔 ≤ {{ targets.revisit_hours if targets and targets.revisit_hours else "T" }}h 判定。</p>
     {% if purchase_run_id %}
     <div class="buy-row"><a class="buy" id="buy" data-run-id="{{ purchase_run_id }}" href="/purchase/{{ purchase_run_id }}">购买本方案</a></div>
     {% endif %}
