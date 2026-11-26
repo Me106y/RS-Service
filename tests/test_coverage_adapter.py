@@ -150,11 +150,28 @@ def test_cloud_filter_is_per_grid_not_whole_aoi() -> None:
         ((29.90, 119.47), [(start, 100.0)]),
         ((30.27, 120.16), [(start, 35.0)]),
     ]
-    kept, dropped = _filter_windows_by_cell(
+    kept, stats = _filter_windows_by_cell(
         {(0, 0): (west,), (0, 1): (east,)}, cells, series_points, 70
     )
-    assert dropped == 1
+    assert stats["dropped"] == 1
+    # 两个网格属于同一颗卫星（key 的 sat 分量都是 0），所以三态计数累加在一起。
+    assert stats["per_sat"][0] == {"dropped": 1, "clear": 1, "no_data": 0}
     assert set(kept) == {(0, 1)}
+
+
+def test_cloud_filter_marks_missing_forecast_as_no_data() -> None:
+    """取不到云量的访问不剔除，但要记进 no_data，报告才能如实标"无数据"。"""
+
+    from types import SimpleNamespace
+
+    from rs_service.coverage_engine.adapter import _filter_windows_by_cell
+
+    start = datetime(2026, 11, 12, 2, 0, tzinfo=UTC)
+    window = SimpleNamespace(grid_index=0, start_utc=start, end_utc=start + timedelta(minutes=10))
+    cells = [SimpleNamespace(representative_lat=29.90, representative_lon=119.47)]
+    kept, stats = _filter_windows_by_cell({(3, 0): (window,)}, cells, [((29.90, 119.47), [])], 70)
+    assert stats["per_sat"][3] == {"dropped": 0, "clear": 0, "no_data": 1}
+    assert set(kept) == {(3, 0)}
 
 
 def test_cloud_sample_points_cover_aoi_without_centroid_bias() -> None:

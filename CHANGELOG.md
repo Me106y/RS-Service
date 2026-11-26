@@ -2,6 +2,17 @@
 
 RS-Service 的用户可见变化。版本规则见 [VERSIONING.md](https://github.com/Me106y/SIRIAgent/blob/main/docs/VERSIONING.md)。
 
+## [2.4.0] - 2026-11-26
+
+### Added
+
+- `plan.json.candidate_review`：`revisit` 结果逐颗解释候选卫星为什么入选 / 备选 / 未采用，闭环 `目录星数 = 入选 + 备选 + 未采用`。主原因唯一（数据不可用 / 轨迹未经过 / 仰角不足 / 仅夜间过境 / 视场未覆盖 / 云量剔除 / 冗余 / 等价解 / 备选）+ 可核对依据；备选用覆盖并集重算（替换某颗入选星后仍 100%），不重跑 ILP，不改求解结果。
+- 报告新增第 05 节「候选与排除」：按原因分组、默认折叠、PDF 只印分组计数与前 5 颗；首屏 KPI 仍只两项。
+
+### Changed
+
+- 云量取数按窗口起点补 `past_days`/`forecast_days`，含过去时段的窗口也能取到数据；过滤结果改为逐星三态计数（剔除 / 保留 / 无数据），写进 `cloud.per_sat`。
+
 ## [2.3.0] - 2026-11-16
 
 ### Added

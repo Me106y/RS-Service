@@ -224,8 +224,18 @@ footer{margin-top:64px;padding-top:20px;border-top:1px solid var(--line);color:v
 .export-pdf:hover{background:rgba(72,199,217,.14)!important}
 :root[data-theme="light"] .export-pdf{border-color:rgba(11,110,131,.35)!important}
 :root[data-theme="light"] .export-pdf:hover{background:rgba(11,110,131,.08)!important}
+.review-group{margin:8px 0 0;border-top:1px solid var(--line-soft)}
+.review-group summary{cursor:pointer;padding:10px 2px;display:flex;gap:10px;align-items:baseline;font-size:14.5px}
+.review-group summary span{color:var(--muted);font-size:13px}
+.review-group table{margin-top:6px}
+.review-table td{font-size:13px;vertical-align:top}
+.print-top{display:none}
 @media print{
   .top-actions{display:none}
+  .review-group>table{display:none}
+  .review-group>summary{list-style:none}
+  .review-group{display:none}
+  .print-top{display:block;font-size:12px;color:#333;margin:4px 0 8px}
   :root{--ink:#fff; --panel:#fff; --panel-2:#fff; --line:#c9d3dc; --line-soft:#e3e9ef;
     --txt:#0f1a24; --muted:#4b5b6a; --dim:#5b6b7a; --rule:#8fa2b2;
     --amber:#a9540a; --cyan:#0b6e83; --red:#b3261e; --green:#156b45;
@@ -272,7 +282,8 @@ footer{margin-top:64px;padding-top:20px;border-top:1px solid var(--line);color:v
     <a href="#plan"><span class="idx">01</span>卫星构成</a>
     <a href="#cover"><span class="idx">02</span>访问覆盖</a>
     <a href="#purchase"><span class="idx">03</span>推荐计划</a>
-    <a href="#notes"><span class="idx">04</span>口径与精度</a>
+    {% if review %}<a href="#review"><span class="idx">04</span>候选与排除</a>{% endif %}
+    <a href="#notes"><span class="idx">{{ "05" if review else "04" }}</span>口径与精度</a>
   </nav>
   <div class="foot">{{ accuracy_note }}<br>{{ algo_label }}</div>
 </aside>
@@ -379,6 +390,42 @@ footer{margin-top:64px;padding-top:20px;border-top:1px solid var(--line);color:v
     <div class="buy-row"><a class="buy" id="buy" data-run-id="{{ purchase_run_id }}" href="/purchase/{{ purchase_run_id }}">购买本方案</a></div>
     {% endif %}
   </section>
+
+  {% if review %}
+  <section id="review">
+    <h2>候选与排除</h2>
+    <p class="lede">目录里共 {{ review.total }} 颗：入选 {{ review.selected }}、备选 {{ review.candidate }}、未采用 {{ review.excluded }}。每颗星只记一条主原因，长表按原因分组、默认折叠。</p>
+    {% if review.degraded %}<p class="fine">解释段超过 300 s 防呆上限，部分星未完成评估（结论列标“未评估”）。</p>{% endif %}
+    {% if review.cloud.filtered %}<p class="fine">本次启用云量过滤：剔除 {{ review.cloud.dropped_windows }} 次访问；无云量数据的访问占 {{ review.cloud.no_data_pct }}%，不剔除但已在云量列标“无”。</p>{% elif review.cloud.filtered is defined %}<p class="fine">本次未启用云量过滤：云量列显示“—”，"云量剔除"一类为空。</p>{% endif %}
+    {% if review.ties and (review.ties.greedy_only or review.ties.ilp_only) %}
+    <p class="fine">贪心解与推荐解同为 {{ review.selected }} 颗、同达标；差异星：{% for item in (review.ties.greedy_only + review.ties.ilp_only) %}{{ item }}{% if not loop.last %}、{% endif %}{% endfor %}{% if review.ties.shared_count %}；共同 {{ review.ties.shared_count }} 颗{% endif %}。这些星归“等价解”。</p>
+    {% endif %}
+    {% for g in review.groups %}
+    <p class="print-top"><strong>{{ g.label }}</strong>（{{ g.count }} 颗）：{% for r in g.top %}{{ r.name }}{% if not loop.last %}、{% endif %}{% endfor %}{% if g.count > g.top|length %} 等{% endif %}</p>
+    <details class="review-group">
+      <summary><strong>{{ g.label }}</strong><span>{{ g.count }} 颗</span></summary>
+      <table class="review-table"><thead><tr>
+        <th>卫星</th><th>类别·分辨率·幅宽</th><th class="num">覆盖格</th><th class="num">访问</th><th>单星达标</th><th class="num">增量</th><th>云量 剔/保/无</th><th>结论</th><th>依据</th>
+      </tr></thead><tbody>
+      {% for r in g.rows %}
+      <tr>
+        <td>{{ r.name }}<span class="sat-id">NORAD {{ r.sat_id }}</span></td>
+        <td>{{ r.sensor_class or "—" }}{% if r.resolution_m %} · {{ r.resolution_m }} m{% endif %}{% if r.swath_km %} · {{ r.swath_km }} km{% endif %}</td>
+        <td class="num">{{ r.covered_cells }} <small>{{ r.covered_pct }}%</small></td>
+        <td class="num">{{ r.access_count }}</td>
+        <td>{% if r.standalone_qualified_pct is none %}—{% elif r.standalone_ok %}是{% else %}否{% endif %}</td>
+        <td class="num">{% if r.marginal_cells is none %}—{% else %}{{ r.marginal_cells }}{% endif %}</td>
+        <td>{% if r.cloud %}{{ r.cloud.dropped }}/{{ r.cloud.clear }}/{{ r.cloud.no_data }}{% else %}—{% endif %}</td>
+        <td><span class="tag">{{ r.verdict_label }}</span></td>
+        <td>{{ r.evidence }}</td>
+      </tr>
+      {% endfor %}
+      </tbody></table>
+    </details>
+    {% endfor %}
+    <p class="fine">{% for n in review.notes %}{{ n }}{% if not loop.last %}；{% endif %}{% endfor %}</p>
+  </section>
+  {% endif %}
 
   <section id="notes">
     <h2>口径与精度</h2>
