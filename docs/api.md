@@ -44,23 +44,24 @@ v2.0.0 只有一个场景 `revisit`：给定区域 + 重访时间 T，求最少�
 | GET | `/plan-options` | 单任务 `revisit`、T 档位、窗口规则、AOI（市/区县）、可规划数量、TLE 状态 |
 | POST | `/plans` | `{operation:"revisit", aoi_code|aoi_wkt, revisit_hours, start_utc?, max_resolution_m?, cloud_filter?}`；返回 202 + `job_id` |
 | GET | `/plans/{job_id}` | `queued` / `running` / `completed` / `failed` + `progress` + 结果或错误 |
-| POST | `/plans/{job_id}/report` | 用已完成结果渲染四节 HTML，落 `reports/imaging-plan/revisit/<job_id>/` |
+| POST | `/plans/{job_id}/report` | 用已完成结果渲染五节 HTML，落 `reports/imaging-plan/revisit/<job_id>/` |
 | GET | `/plans/{job_id}/report` | 报告 HTML 本体（按 `run_id` 扫任务子目录） |
 | GET | `/plans/history` | 历史报告扁平列表（只读 `meta.json`）；新 run `task="revisit"`，旧 run 保留 `task1..task5` |
 
 - 口径：默认 `W = min(3T, 336h)`；T 为整数，范围 48–168，默认 48。可选 `window_hours`（48–336）覆盖默认窗口，此时 `window.window_rule="user"`。面积目标固定 100，`allow_area_fallback=false`；`auto_expand=false`。未指定 `window_hours` 且 T>112h 时 W 达到 336h 上限（14 天），结果 `window.capped_by_horizon=true` 并标注。
 - 判定：每个 5 km 网格代表点的最长重访间隔（**含夜间与窗口首尾空档**）≤ T；全部网格达标才算可行。`summary_cards.qualified_area_pct` 是达标面积；`summary_cards.ceiling_area_pct` 是全部候选星一起算的“全目录上限”，不可行时用来区分“目录不够”与“算法没找到”。
-- 结果字段：`targets.revisit_hours`、`targets.area_pct=100`、`targets.temporal_coverage_pct=null`；`window.window_rule="3T"`、`window.used_horizon_h`、`window.capped_by_tle`；`optimality ∈ proven_optimal|time_limited|infeasible_heuristic`；`suggestion` 仅在不可行且 ≤10m 时给出“放宽到 ≤1km 可 100%”的结构化建议（不自动切换）。
+- 结果字段：`candidate_review` 是逐颗候选的解释清单（见下）；`targets.revisit_hours`、`targets.area_pct=100`、`targets.temporal_coverage_pct=null`；`window.window_rule="3T"`、`window.used_horizon_h`、`window.capped_by_tle`；`optimality ∈ proven_optimal|time_limited|infeasible_heuristic`；`suggestion` 仅在不可行且 ≤10m 时给出“放宽到 ≤1km 可 100%”的结构化建议（不自动切换）。
 - 进度：`GET /plans/{job_id}` 的 `progress={stage,label,current,total,pct,elapsed_s,updated_at}`；阶段 `prepare/grid/opportunities/cloud/selection/metrics/playback/done`。机会阶段 `current/total` 是已传播卫星数；选星阶段 1/2、2/2。前端 1.2s 轮询，不提供 ETA。
 - AOI：只支持市/区县 adcode 或浙江省内 `POLYGON` WKT；自定义面积 >20,000 km² 返回 `aoi_too_large`，省级 AOI 也返回 `aoi_too_large`。
 - 载荷：只对光学开放；`sensor_types` 固定 `["optical"]`；`max_resolution_m` 只接受 1/2/5/10。目录 203 颗（全部 ≤10m 光学，含 3 颗 Sentinel-2、110 颗 PlanetScope Flock），可规划 203 颗；新增星按 `official/vendor/approx` 标 `confidence` 并保存 `source_url`，报告与目录可追溯。高光谱保留在星历，不参与本场景。
-- 云量：默认**不过滤**；`cloud_filter=true` 时按 AOI 内网格代表点取 Open-Meteo 逐小时 `cloud_cover`，逐网格剔除 >70% 的访问；取不到时不过滤并在 assumptions 说明。
+- 云量：默认**不过滤**；`cloud_filter=true` 时按 AOI 内网格代表点取 Open-Meteo 逐小时 `cloud_cover`，逐网格剔除 >70% 的访问；取不到时不过滤并在 assumptions 说明。请求按窗口起点带 `past_days`（≤92 天）/ `forecast_days`（≤16 天），窗口超出数据范围的小时按"无云量数据"处理，不剔除但标明。过滤结果 `cloud.per_sat={sat_index:{dropped,clear,no_data}}` 逐星三态计数。
 - 成像门限：非 SAR 最小仰角 ≥10°；光学另要求目标地面太阳高度 ≥10°（`RS_OPTICAL_SUN_MIN_DEG`，默认 10）；夜间/低仰角窗口不进入覆盖与选星。
 - 选星限时：贪心 ≤60s（`greedy_time_limit_s`），ILP ≤30s（`selection_time_limit_s`）；到点返回当前最好集合，`optimality=time_limited`。不可行时不允许返回“0 颗星、0%”，必须有最佳努力与全目录上限。
 - TLE 年龄按 `tle_record.epoch_utc` 实时计算并展示 `max_age_hours`；不再按 72h/7 天做降级或拒绝求解（`degraded`/`stale` 恒为 false）。
 - 任务状态在进程内；重启丢任务，报告文件保留；前端用 localStorage 的 job_id 恢复，404 时提示“任务已失效”。
 - 报告落盘：`reports/imaging-plan/revisit/<run_id>/{plan.json,report.html,meta.json}`；旧 task1~task5 目录保留；根上 `latest` 软链指向最近一份。
-- 报告首屏 KPI：最少卫星数 / 达标面积（最长重访 ≤ T · 目标 100%）/ 全目录上限 / 评估窗口；不再展示时间覆盖率与面积加权 MRT 作为主 KPI；不可行时标题写“未达标，全目录上限 X%”，并给出放宽分辨率的实测建议。
+- 报告首屏 KPI：最少卫星数 / 达标面积（最长重访 ≤ T · 目标 100%）；不再展示全目录上限、评估窗口、时间覆盖率与面积加权 MRT；不可行时标题写“未达标，最好方案覆盖 X%”，并给出放宽分辨率的实测建议。目录计数只允许出现在第 05 节。
+- `candidate_review`：`{generated_by, degraded, catalog_total, summary:{selected,candidate,excluded,groups[]}, targets, ties:{greedy_only,ilp_only,shared_count}, cloud:{filtered,dropped_windows,no_data_pct}, method_notes[], rows[]}`。闭环 `catalog_total = selected + candidate + excluded`；每行 `{sat_id,name,sensor_class,resolution_m,swath_km,covered_cells,covered_pct,access_count,standalone_qualified_pct,marginal_cells,cloud{...},verdict,reason,reason_label,evidence,replaces[]}`。`verdict ∈ selected|candidate|excluded`；主原因唯一，优先级 `data_unavailable > no_track > elevation_below_threshold > night_only > geometry_miss > cloud_dropped > insufficient > redundant > equivalent_tie > alternate > selected`。备选用覆盖并集重算（替换某颗入选星后仍 100%），不重跑 ILP；解释段不改 `selected_sat_ids/feasible/optimality`，300 s 防呆、超时置 `degraded=true` 并降级为 `not_evaluated`。
 - `GET /plans/history` 返回 `{ok, root, runs[], total, by_task}`；`runs` 按 `created_at` 倒序，字段沿用 `run_id/task/task_label/aoi_kind/area_name/window_start/window_end/sat_count/kpi/feasible/created_at/relative_report/relative_plan/has_report`；`revisit` 的 KPI 是「达标面积（≤T）」。
 
 ## 遥感解译 `/api/v1/interpret`

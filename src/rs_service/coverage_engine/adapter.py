@@ -44,6 +44,8 @@ from ..astro import cloud
 
 # 触发 vendor 的 sys.path 注入，必须在导入 siriagent_skill 之前。
 from . import VENDOR_DIR  # noqa: F401
+from .candidate_review import GENERATOR as CANDIDATE_REVIEW_GENERATOR
+from .candidate_review import build_candidate_review
 
 # 推扫相机沿轨只有一个线阵；离散采样之间必须用「v·dt/2」的沿轨半长补齐，
 # 否则 10 s 采样之间会漏掉约 75 km。取 0.55·v·dt（约 10% 重叠）。
@@ -227,6 +229,91 @@ def collect_candidates(
             )
         )
     return candidates, blocked
+
+
+def collect_catalog_rows(
+    session: Session,
+    sensor_types: Iterable[str],
+    max_resolution_m: float = 10.0,
+) -> list[dict[str, Any]]:
+    """目录全量对账：外连接取所有卫星，并给出未进候选池的原因。
+
+    ``collect_candidates`` 用内连接，缺 sensor/TLE 的卫星会在循环前被丢掉，
+    无法回答"目录里到底有多少颗、它们为什么没被考虑"。这里只做对账，**不改变
+    候选池成员**：有原因的星不会进入选星。
+    """
+
+    wanted = {_UI_SENSOR_TO_CLASS[item] for item in sensor_types if item in _UI_SENSOR_TO_CLASS}
+    rows = session.execute(
+        select(Satellite, Sensor, TleRecord)
+        .select_from(Satellite)
+        .outerjoin(Sensor, Sensor.sat_id == Satellite.sat_id)
+        .outerjoin(TleCurrent, TleCurrent.sat_id == Satellite.sat_id)
+        .outerjoin(TleRecord, TleRecord.id == TleCurrent.tle_id)
+    ).all()
+    seen: set[int] = set()
+    catalog: list[dict[str, Any]] = []
+    for sat, sensor, tle in rows:
+        norad = int(sat.sat_id)
+        if norad in seen:
+            continue
+        seen.add(norad)
+        sensor_type = (sensor.sensor_type or "").strip() if sensor else ""
+        sensor_class = _UI_SENSOR_TO_CLASS.get(sensor_type)
+        resolution_m = _parse_resolution_m(sensor.raw_spec) if sensor else None
+        swath_km = float(sensor.swath_km) if sensor is not None and sensor.swath_km else None
+        catalog.append(
+            {
+                "norad_id": norad,
+                "name": sat.name,
+                "sensor_class": sensor_class,
+                "resolution_m": resolution_m,
+                "swath_km": swath_km,
+                "unavailable_reason": _catalog_block_reason(
+                    sensor_class=sensor_class,
+                    sensor_type=sensor_type,
+                    swath_km=swath_km,
+                    resolution_m=resolution_m,
+                    tle=tle,
+                    wanted=wanted,
+                    max_resolution_m=max_resolution_m,
+                ),
+            }
+        )
+    return catalog
+
+
+def _catalog_block_reason(
+    *,
+    sensor_class: str | None,
+    sensor_type: str,
+    swath_km: float | None,
+    resolution_m: float | None,
+    tle: Any,
+    wanted: set[str],
+    max_resolution_m: float,
+) -> str | None:
+    """目录星未进候选池的原因；``None`` 表示应进候选池。"""
+
+    if not sensor_type:
+        return "缺少 sensor 行，无法判定载荷与分辨率"
+    if sensor_class is None:
+        return "非成像载荷，不参与选星"
+    if sensor_class not in wanted:
+        return "载荷类型不在本次筛选范围"
+    if tle is None or not getattr(tle, "omm_json", None):
+        return "缺少 OMM/TLE"
+    if sensor_class == "SAR":
+        return "SAR 缺少原生入射角带；按参考引擎口径阻断，不退回默认带"
+    if not swath_km:
+        return "缺少幅宽"
+    if resolution_m is None:
+        return "缺少分辨率"
+    if resolution_m > max_resolution_m:
+        return f"分辨率 {resolution_m:g} m 超出本次上限 {max_resolution_m:g} m"
+    if not tle.epoch_utc:
+        return "缺少 TLE 时间"
+    return None
 
 
 def _resolve_aoi(session: Session, spec: PlanSpec) -> tuple[str, str, dict[str, Any]]:
@@ -457,14 +544,17 @@ def _filter_windows_by_cell(
     cells: Any,
     series_points: list[tuple[tuple[float, float], list[tuple[datetime, float]]]],
     threshold_pct: float,
-) -> tuple[dict[tuple[int, int], tuple[Any, ...]], int]:
+) -> tuple[dict[tuple[int, int], tuple[Any, ...]], dict[str, Any]]:
     """逐网格用最近的采样点云量剔除访问。
 
     同一个网格只找一次最近采样点；同一采样点的 10 分钟桶只插值一次。
+    返回 ``(kept, stats)``；``stats.per_sat`` 按卫星记录剔除/有数据保留/无数据
+    保留三种计数，供报告做云量三态归因（只记条数无法回答"谁被云挡了"）。
     """
 
     kept: dict[tuple[int, int], tuple[Any, ...]] = {}
     dropped = 0
+    per_sat: dict[int, dict[str, int]] = {}
     nearest: dict[int, int] = {}
     cache: dict[tuple[int, datetime], float | None] = {}
     for key, items in windows.items():
@@ -493,13 +583,19 @@ def _filter_windows_by_cell(
             if cache_key not in cache:
                 cache[cache_key] = cloud.cloud_at(series, middle)
             value = cache[cache_key]
-            if value is not None and value > threshold_pct:
+            counts = per_sat.setdefault(int(key[0]), {"dropped": 0, "clear": 0, "no_data": 0})
+            if value is None:
+                counts["no_data"] += 1
+            elif value > threshold_pct:
+                counts["dropped"] += 1
                 dropped += 1
                 continue
+            else:
+                counts["clear"] += 1
             keep.append(window)
         if keep:
             kept[key] = tuple(keep)
-    return kept, dropped
+    return kept, {"dropped": dropped, "per_sat": per_sat}
 
 
 def _apply_cloud(
@@ -521,12 +617,13 @@ def _apply_cloud(
             reason="Open-Meteo 不可用，本次未过滤云量",
         )
         return store
-    kept, dropped = _filter_windows_by_cell(
+    kept, cloud_detail = _filter_windows_by_cell(
         store.windows,
         store.grid.cells,
         series_points,
         spec.cloud_threshold_pct,
     )
+    dropped = int(cloud_detail["dropped"])
     filtered = copy.copy(store)
     filtered.windows = kept
     filtered.metadata = dict(store.metadata)
@@ -534,12 +631,14 @@ def _apply_cloud(
         "threshold_pct": spec.cloud_threshold_pct,
         "dropped_windows": dropped,
         "sample_points": len(series_points),
+        "per_sat": cloud_detail["per_sat"],
     }
     stats.update(
         filtered=True,
         threshold_pct=spec.cloud_threshold_pct,
         dropped_windows=dropped,
         sample_points=len(series_points),
+        per_sat=cloud_detail["per_sat"],
         reason=None,
     )
     return filtered
@@ -760,6 +859,95 @@ def _attach_report_data(
     }
 
 
+def _aoi_centroid(aoi: dict[str, Any]) -> tuple[float, float] | None:
+    """AOI 形心（纬度, 经度）；零覆盖粗筛诊断只在这一个点上做。"""
+
+    try:
+        geometry = shape(aoi["features"][0]["geometry"])
+        point = geometry.centroid
+        return float(point.y), float(point.x)
+    except Exception:  # noqa: BLE001 - 几何异常时不做诊断
+        return None
+
+
+def _attach_candidate_review(
+    result: dict[str, Any],
+    spec: PlanSpec,
+    candidates: list[Candidate],
+    blocked: list[dict[str, Any]],
+    catalog_rows: list[dict[str, Any]],
+    cloud_stats: dict[str, Any],
+    store: Any,
+    aoi: dict[str, Any],
+) -> None:
+    """补 ``candidate_review``：逐颗解释为什么被采用或没有采用。
+
+    解释段在求解定稿后运行，只读机会窗口；任何异常都降级为一份"未评估"的
+    空壳，绝不改变 ``selected_sat_ids`` / ``feasible`` / ``optimality``。
+    """
+
+    if spec.operation != "revisit":
+        return
+    selection = result.get("selection") or {}
+    recommended = selection.get("recommended_result") or {}
+    strict = selection.get("strict_result") or {}
+    mrt_target_s = recommended.get("mrt_target_s")
+    if mrt_target_s is None and spec.mrt_target_minutes is not None:
+        mrt_target_s = float(spec.mrt_target_minutes) * 60.0
+    horizon_h = float(
+        (result.get("window") or {}).get("used_horizon_h") or spec.horizon_h
+    )
+    unavailable = {
+        int(item["norad_id"]): str(item.get("reason") or "不可用") for item in blocked
+    }
+    for item in store.metadata.get("propagation_failures") or []:
+        norad = item.get("norad_id")
+        if norad is not None:
+            unavailable[int(norad)] = "SGP4 传播失败（TLE 可能已衰减），未参与机会计算"
+    profiles = [
+        {
+            "norad_id": item.norad_id,
+            "name": item.name,
+            "sensor_class": item.sensor_class,
+            "resolution_m": item.resolution_m,
+            "swath_km": item.swath_km,
+        }
+        for item in candidates
+    ]
+    try:
+        review = build_candidate_review(
+            store=store,
+            profiles=profiles,
+            catalog=catalog_rows,
+            selected_indices=recommended.get("selected_sat_indices") or [],
+            selected_ids=recommended.get("selected_sat_ids") or [],
+            cloud_stats=cloud_stats,
+            mrt_target_s=mrt_target_s,
+            target_area_pct=float(recommended.get("area_target_pct") or 100.0),
+            min_simultaneous=int(spec.min_simultaneous),
+            greedy_ids=(strict.get("greedy") or {}).get("selected_sat_ids") or [],
+            ilp_ids=(strict.get("ilp") or {}).get("selected_sat_ids") or [],
+            aoi_point=_aoi_centroid(aoi),
+            horizon_h=horizon_h,
+            deadline_s=300.0,
+            unavailable_by_id=unavailable,
+        )
+    except Exception as exc:  # noqa: BLE001 - 解释材料失败不能拖垮主结果
+        review = {
+            "generated_by": CANDIDATE_REVIEW_GENERATOR,
+            "degraded": True,
+            "error": str(exc),
+            "catalog_total": len(catalog_rows),
+            "summary": {"selected": 0, "candidate": 0, "excluded": len(catalog_rows), "groups": []},
+            "targets": {},
+            "ties": {},
+            "cloud": {},
+            "method_notes": [f"候选与排除生成失败：{exc}"],
+            "rows": [],
+        }
+    result["candidate_review"] = review
+
+
 def _annotate_result(
     result: dict[str, Any],
     candidates: list[Candidate],
@@ -849,7 +1037,7 @@ def _annotate_result(
             "半长（推扫靠运动累积，不是 60° 扇形）。"
         )
         if blocked:
-            notes.append(f"未参与选星 {len(blocked)} 颗，原因见 blocked_satellites。")
+            notes.append(f"未参与选星 {len(blocked)} 颗，逐颗原因见 candidate_review。")
         if cloud_stats.get("filtered"):
             notes.append(
                 "云量按 AOI 内网格代表点的 Open-Meteo 逐小时 cloud_cover 逐网格剔除访问"
@@ -910,6 +1098,7 @@ def _run_once(
         candidates, blocked = collect_candidates(
             session, spec.sensor_types, spec.max_resolution_m
         )
+        catalog_rows = collect_catalog_rows(session, spec.sensor_types, spec.max_resolution_m)
         if not candidates:
             raise PlanError(
                 "no_candidates",
@@ -961,6 +1150,16 @@ def _run_once(
         progress("playback", "回放与报告数据", None, None)
     if captured.get("store") is not None:
         _attach_report_data(result, candidates, aoi, captured["store"])
+        _attach_candidate_review(
+            result,
+            spec,
+            candidates,
+            blocked,
+            catalog_rows,
+            cloud_stats,
+            captured["store"],
+            aoi,
+        )
     return result
 
 

@@ -7,13 +7,30 @@
 from __future__ import annotations
 
 import json
-import math
 import urllib.parse
 import urllib.request
 from datetime import UTC, datetime, timedelta
 
 FORECAST = "https://api.open-meteo.com/v1/forecast"
 CACHE: dict[tuple, list[tuple[datetime, float]]] = {}
+
+
+def _window_params(start: datetime, hours: int, now: datetime | None = None) -> dict[str, int]:
+    """把评估窗口换算成 Open-Meteo 的 past_days / forecast_days。
+
+    forecast 接口默认从"请求这一刻"起算；窗口含过去时段时必须显式带
+    ``past_days``，否则过去那些小时取不到、``cloud_at`` 返回 None，云量理由
+    会系统性缺失。过去最多 92 天、未来最多 16 天，超界部分按"无云量数据"处理。
+    """
+
+    reference = now or datetime.now(UTC)
+    today = reference.date()
+    start_date = start.date()
+    end_date = (start + timedelta(hours=hours)).date()
+    past_days = min(92, max(0, (today - start_date).days))
+    future_days = (end_date - today).days
+    forecast_days = min(16, max(2, future_days + 1))
+    return {"past_days": past_days, "forecast_days": forecast_days}
 
 
 def _fetch(lat: float, lon: float, start: datetime, hours: int) -> list[tuple[datetime, float]]:
@@ -24,7 +41,7 @@ def _fetch(lat: float, lon: float, start: datetime, hours: int) -> list[tuple[da
         "latitude": f"{lat:.3f}",
         "longitude": f"{lon:.3f}",
         "hourly": "cloud_cover",
-        "forecast_days": min(16, max(2, math.ceil(hours / 24) + 1)),
+        **_window_params(start, hours),
         "timezone": "UTC",
     }
     url = FORECAST + "?" + urllib.parse.urlencode(params)
@@ -81,7 +98,7 @@ def series_for_many(
         "latitude": ",".join(f"{lat:.3f}" for lat, _ in points),
         "longitude": ",".join(f"{lon:.3f}" for _, lon in points),
         "hourly": "cloud_cover",
-        "forecast_days": min(16, max(2, math.ceil(hours / 24) + 1)),
+        **_window_params(start, hours),
         "timezone": "UTC",
     }
     url = FORECAST + "?" + urllib.parse.urlencode(params)

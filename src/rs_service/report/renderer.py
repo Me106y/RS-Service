@@ -149,7 +149,8 @@ def _notes(result: dict[str, Any]) -> list[str]:
         notes.append(f"云量未过滤：{cloud.get('reason') or '未启用'}。")
     blocked = result.get("blocked_satellites") or []
     if blocked:
-        notes.append(f"未参与选星 {len(blocked)} 颗，原因见任务结果。")
+        where = "第 04 节「候选与排除」" if result.get("candidate_review") else "任务结果"
+        notes.append(f"未参与选星 {len(blocked)} 颗，原因见{where}。")
     targets = result.get("targets") or {}
     operation = result.get("operation")
     if operation in {"task1", "task_1_min_satellites_temporal"}:
@@ -444,7 +445,55 @@ def render_report(result: dict[str, Any], run_id: str | None = None) -> str:
         accuracy_note=ACCURACY_NOTE,
         algo_label="coverage-engine 0.1.0-rc.1 · RS-Service",
         purchase_run_id=run_id,
+        review=_review_view(result),
     )
+
+
+def _review_view(result: dict[str, Any]) -> dict[str, Any] | None:
+    """把 ``candidate_review`` 整理成模板可直接渲染的分组视图。
+
+    报告只读 plan.json 里的这一份，不再做任何卫星级计算（同源断言要求
+    报告里的颗数等于 rows 长度）。
+    """
+
+    review = result.get("candidate_review")
+    if not isinstance(review, dict) or not review:
+        return None
+    # 拷贝后再补展示字段：渲染不能污染 plan.json 里的同一份 dict。
+    rows = [dict(row) for row in (review.get("rows") or [])]
+    summary = review.get("summary") or {}
+    targets = review.get("targets") or {}
+    area_target = float(targets.get("area_pct") or 100.0)
+    verdict_labels = {"selected": "入选", "candidate": "备选", "excluded": "未采用"}
+    for row in rows:
+        row["verdict_label"] = verdict_labels.get(str(row.get("verdict")), str(row.get("verdict")))
+        standalone = row.get("standalone_qualified_pct")
+        row["standalone_ok"] = standalone is not None and float(standalone) >= area_target - 1e-9
+    groups = []
+    for item in summary.get("groups") or []:
+        code = item.get("code")
+        members = [row for row in rows if row.get("reason") == code]
+        groups.append(
+            {
+                "code": code,
+                "label": item.get("label") or code,
+                "count": int(item.get("count") or len(members)),
+                "rows": members,
+                "top": members[:5],
+            }
+        )
+    return {
+        "degraded": bool(review.get("degraded")),
+        "total": int(review.get("catalog_total") or len(rows)),
+        "selected": int(summary.get("selected") or 0),
+        "candidate": int(summary.get("candidate") or 0),
+        "excluded": int(summary.get("excluded") or 0),
+        "groups": groups,
+        "ties": review.get("ties") or {},
+        "cloud": review.get("cloud") or {},
+        "notes": review.get("method_notes") or [],
+        "targets": targets,
+    }
 
 
 def _duration_label(minutes: float | None) -> str:
